@@ -12,9 +12,11 @@
       content /var/snapraid/snapraid.content
       content /mnt/disk1/snapraid.content
       content /mnt/disk2/snapraid.content
+      content /mnt/disk3/snapraid.content
 
       data disk1 /mnt/disk1
       data disk2 /mnt/disk2
+      data disk3 /mnt/disk3
 
       exclude *.unrecoverable
       exclude /tmp/
@@ -64,6 +66,11 @@
         exit 1
       fi
 
+      if ! mountpoint -q /mnt/disk3; then
+        echo "ERROR: /mnt/disk3 is not mounted" | tee -a "$LOG_FILE"
+        exit 1
+      fi
+
       if ! mountpoint -q /mnt/parity; then
         echo "ERROR: /mnt/parity is not mounted" | tee -a "$LOG_FILE"
         exit 1
@@ -71,7 +78,7 @@
 
       echo "Checking disk SMART status..." | tee -a "$LOG_FILE"
       SMART_FAILED=0
-      for disk in /dev/sda /dev/sdb /dev/sdc; do
+      for disk in /dev/sda /dev/sdb /dev/sdc /dev/sdd; do
         if ! ${pkgs.smartmontools}/bin/smartctl -H "$disk" | grep -q "PASSED"; then
           echo "WARNING: SMART failed for $disk" | tee -a "$LOG_FILE"
           SMART_FAILED=1

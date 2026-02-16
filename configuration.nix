@@ -12,7 +12,6 @@
     smartmontools
     mergerfs
     mergerfs-tools
-    snapraid
     nfs-utils
     samba
     tmux

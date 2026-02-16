@@ -5,7 +5,7 @@
     disk = {
       system = {
         type = "disk";
-        device = "/dev/sdc";
+        device = "/dev/sdd";
         content = {
           type = "gpt";
           partitions = {
@@ -33,7 +33,7 @@
             };
 
             root = {
-              size = "100G";
+              size = "100%";
               content = {
                 type = "filesystem";
                 format = "ext4";
@@ -42,21 +42,6 @@
                   "defaults"
                   "noatime"
                 ];
-              };
-            };
-
-            parity = {
-              size = "100%";
-              content = {
-                type = "filesystem";
-                format = "ext4";
-                mountpoint = "/mnt/parity";
-                mountOptions = [
-                  "defaults"
-                  "noatime"
-                  "nodiratime"
-                ];
-                extraArgs = [ "-L" "parity" ];
               };
             };
           };
@@ -107,6 +92,31 @@
                   "user_xattr"
                 ];
                 extraArgs = [ "-L" "disk2" ];
+              };
+            };
+          };
+        };
+      };
+
+      data3 = {
+        type = "disk";
+        device = "/dev/sdc";
+        content = {
+          type = "gpt";
+          partitions = {
+            disk3 = {
+              size = "100%";
+              content = {
+                type = "filesystem";
+                format = "ext4";
+                mountpoint = "/mnt/disk3";
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [ "-L" "disk3" ];
               };
             };
           };

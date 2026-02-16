@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Replace Disk - Replace a failed disk using SnapRAID
+# Replace Disk - Replace a failed disk using SnapRAID (runs remotely via SSH)
 #
 
 set -euo pipefail
@@ -13,6 +13,10 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$PROJECT_DIR/config.nix"
 
 separator() {
     echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
@@ -29,21 +33,59 @@ confirm() {
     [[ "${response,,}" == "y" ]]
 }
 
-# Check that we are root
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}This script must be run as root${NC}"
-    echo "Use: sudo $0"
+# ============================================================================
+# CHECK LOCAL CONFIGURATION
+# ============================================================================
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo -e "${RED}Error: config.nix not found${NC}"
+    echo "Run first: ./scripts/setup.sh"
     exit 1
 fi
 
-# Check snapraid
-if ! command -v snapraid &> /dev/null; then
-    echo -e "${RED}SnapRAID is not installed${NC}"
+# Read connection details from config.nix
+NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+
+SSH_OPTS="-o StrictHostKeyChecking=no"
+SSH_TARGET="$ADMIN_USER@$NAS_IP"
+
+# Helper to run commands on the NAS
+nas() {
+    ssh $SSH_OPTS "$SSH_TARGET" "$@"
+}
+
+nas_sudo() {
+    ssh $SSH_OPTS "$SSH_TARGET" "sudo $*"
+}
+
+# ============================================================================
+# CONNECTIVITY CHECK
+# ============================================================================
+
+echo -e "${YELLOW}Connecting to NAS ($HOSTNAME at $NAS_IP)...${NC}"
+
+if ! ping -c 1 -W 3 "$NAS_IP" &>/dev/null; then
+    echo -e "${RED}Cannot reach $NAS_IP${NC}"
+    exit 1
+fi
+
+if ! ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
+    echo -e "${RED}Cannot connect via SSH to $SSH_TARGET${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Connected${NC}"
+echo
+
+# Check snapraid on NAS
+if ! nas "command -v snapraid" &>/dev/null; then
+    echo -e "${RED}SnapRAID is not installed on the NAS${NC}"
     exit 1
 fi
 
 # Banner
-clear
 cat << "EOF"
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
@@ -67,36 +109,53 @@ header "CURRENT DISK STATUS"
 echo -e "${BOLD}Configured disks:${NC}"
 echo
 
-# Extract disks from snapraid.conf
+# Extract disks from snapraid.conf on NAS
+nas_disk_info=$(nas "
 if [ -f /etc/snapraid.conf ]; then
-    grep "^data" /etc/snapraid.conf | while IFS= read -r line; do
-        disk_name=$(echo "$line" | awk '{print $2}')
-        disk_path=$(echo "$line" | awk '{print $3}')
-
-        # Check if mounted
-        if mountpoint -q "$disk_path" 2>/dev/null; then
-            status="${GREEN}mounted${NC}"
-            size=$(df -h "$disk_path" | tail -1 | awk '{print $2}')
-            used=$(df -h "$disk_path" | tail -1 | awk '{print $3}')
+    grep '^data' /etc/snapraid.conf | while IFS= read -r line; do
+        disk_name=\$(echo \"\$line\" | awk '{print \$2}')
+        disk_path=\$(echo \"\$line\" | awk '{print \$3}')
+        if mountpoint -q \"\$disk_path\" 2>/dev/null; then
+            size=\$(df -h \"\$disk_path\" | tail -1 | awk '{print \$2}')
+            used=\$(df -h \"\$disk_path\" | tail -1 | awk '{print \$3}')
+            echo \"MOUNTED:\$disk_name:\$disk_path:\$size:\$used\"
         else
-            status="${RED}NOT MOUNTED${NC}"
-            size="N/A"
-            used="N/A"
+            echo \"UNMOUNTED:\$disk_name:\$disk_path:N/A:N/A\"
         fi
-
-        echo -e "  $disk_name ($disk_path): $status  Size: $size  Used: $used"
     done
 else
-    echo -e "${RED}/etc/snapraid.conf not found${NC}"
+    echo 'NO_CONF'
+fi
+")
+
+if [[ "$nas_disk_info" == "NO_CONF" ]]; then
+    echo -e "${RED}/etc/snapraid.conf not found on the NAS${NC}"
     exit 1
 fi
+
+echo "$nas_disk_info" | while IFS=':' read -r status disk_name disk_path size used; do
+    if [[ "$status" == "MOUNTED" ]]; then
+        echo -e "  $disk_name ($disk_path): ${GREEN}mounted${NC}  Size: $size  Used: $used"
+    else
+        echo -e "  $disk_name ($disk_path): ${RED}NOT MOUNTED${NC}  Size: $size  Used: $used"
+    fi
+done
 
 echo
 
 # Parity disk
-parity_path=$(grep "^parity" /etc/snapraid.conf | awk '{print $2}')
-if [ -n "$parity_path" ] && [ -f "$parity_path" ]; then
-    parity_size=$(du -h "$parity_path" | cut -f1)
+parity_info=$(nas "
+parity_path=\$(grep '^parity' /etc/snapraid.conf | awk '{print \$2}')
+if [ -n \"\$parity_path\" ] && [ -f \"\$parity_path\" ]; then
+    parity_size=\$(du -h \"\$parity_path\" | cut -f1)
+    echo \"OK:\$parity_path:\$parity_size\"
+else
+    echo \"FAIL:\$parity_path:\"
+fi
+")
+
+IFS=':' read -r parity_status parity_path parity_size <<< "$parity_info"
+if [[ "$parity_status" == "OK" ]]; then
     echo -e "  Parity: ${GREEN}OK${NC} $parity_path ($parity_size)"
 else
     echo -e "  Parity: ${RED}X Not found${NC}"
@@ -115,23 +174,18 @@ header "DISK SELECTION"
 echo "Which disk do you need to replace?"
 echo
 
-# List available disks
-disk_list=()
+# Get disk list from NAS
+mapfile -t disk_list < <(nas "grep '^data' /etc/snapraid.conf | awk '{print \$2\":\"\$3}'")
+
 i=1
-grep "^data" /etc/snapraid.conf | while IFS= read -r line; do
-    disk_name=$(echo "$line" | awk '{print $2}')
-    disk_path=$(echo "$line" | awk '{print $3}')
-    disk_list+=("$disk_name:$disk_path")
+for entry in "${disk_list[@]}"; do
+    disk_name=$(echo "$entry" | cut -d':' -f1)
+    disk_path=$(echo "$entry" | cut -d':' -f2)
     echo "  $i) $disk_name ($disk_path)"
     ((i++))
-done > /tmp/disk_list.txt
+done
 
-# Read list into array
-mapfile -t disk_list < <(grep "^data" /etc/snapraid.conf | awk '{print $2":"$3}')
-
-cat /tmp/disk_list.txt
 echo
-
 read -r -p "$(echo -e ${CYAN}Select the number of the disk to replace:${NC} )" selection
 
 # Validate selection
@@ -161,7 +215,7 @@ header "REPLACEMENT DISK"
 echo -e "${BOLD}Available disks in the system:${NC}"
 echo
 
-lsblk -d -o NAME,SIZE,TYPE,MODEL | grep -E "disk|NAME"
+nas "lsblk -d -o NAME,SIZE,TYPE,MODEL | grep -E 'disk|NAME'"
 
 echo
 read -r -p "$(echo -e ${CYAN}Enter the replacement device [e.g.: sdd]:${NC} )" new_device
@@ -177,15 +231,15 @@ if [[ ! "$new_device" =~ ^/dev/ ]]; then
     new_device="/dev/$new_device"
 fi
 
-# Check that it exists
-if [ ! -b "$new_device" ]; then
-    echo -e "${RED}Device $new_device does not exist${NC}"
+# Check that it exists on the NAS
+if ! nas "test -b $new_device"; then
+    echo -e "${RED}Device $new_device does not exist on the NAS${NC}"
     exit 1
 fi
 
 # New disk information
-model=$(lsblk -d -n -o MODEL "$new_device" 2>/dev/null || echo "Unknown")
-size=$(lsblk -d -n -o SIZE "$new_device" 2>/dev/null || echo "Unknown")
+model=$(nas "lsblk -d -n -o MODEL '$new_device' 2>/dev/null" || echo "Unknown")
+size=$(nas "lsblk -d -n -o SIZE '$new_device' 2>/dev/null" || echo "Unknown")
 
 echo
 echo -e "${BOLD}Device:${NC} $new_device"
@@ -194,9 +248,9 @@ echo -e "${BOLD}Size:${NC}   $size"
 echo
 
 # Check if it has data
-if lsblk -n "$new_device" 2>/dev/null | grep -q "part"; then
+if nas "lsblk -n '$new_device' 2>/dev/null | grep -q part"; then
     echo -e "${RED}${BOLD}WARNING: The disk has existing partitions${NC}"
-    lsblk "$new_device"
+    nas "lsblk '$new_device'"
     echo
 fi
 
@@ -219,9 +273,6 @@ echo "  5. Recover data using SnapRAID"
 echo "  6. Verify integrity of recovered data"
 echo
 
-echo -e "${YELLOW}Estimated time: 2-6 hours (depends on data size)${NC}"
-echo
-
 echo -e "${RED}${BOLD}WARNING${NC}"
 echo -e "${RED}All data on $new_device will be DESTROYED${NC}"
 echo
@@ -240,14 +291,14 @@ echo
 header "STEP 1: PREPARE NEW DISK"
 
 # Unmount failed disk if mounted
-if mountpoint -q "$failed_disk_path" 2>/dev/null; then
+if nas "mountpoint -q '$failed_disk_path' 2>/dev/null"; then
     echo "Unmounting failed disk..."
-    umount "$failed_disk_path" || echo "Could not unmount (disk may be failed)"
+    nas_sudo "umount '$failed_disk_path'" || echo "Could not unmount (disk may be failed)"
 fi
 
 echo "Partitioning $new_device..."
-parted -s "$new_device" mklabel gpt
-parted -s "$new_device" mkpart primary ext4 0% 100%
+nas_sudo "parted -s '$new_device' mklabel gpt"
+nas_sudo "parted -s '$new_device' mkpart primary ext4 0% 100%"
 
 # Determine partition name
 if [[ "$new_device" =~ nvme ]]; then
@@ -256,19 +307,17 @@ else
     partition="${new_device}1"
 fi
 
-sleep 2
-partprobe "$new_device"
-sleep 1
+nas_sudo "sleep 2 && partprobe '$new_device' && sleep 1"
 
 echo "Formatting with ext4..."
-mkfs.ext4 -F -L "$failed_disk_name" "$partition"
+nas_sudo "mkfs.ext4 -F -L '$failed_disk_name' '$partition'"
 
 echo "Mounting new disk..."
-mount "$partition" "$failed_disk_path"
+nas_sudo "mount '$partition' '$failed_disk_path'"
 
 echo "Setting permissions..."
-chown nas:nas "$failed_disk_path"
-chmod 755 "$failed_disk_path"
+nas_sudo "chown $ADMIN_USER:$ADMIN_USER '$failed_disk_path'"
+nas_sudo "chmod 755 '$failed_disk_path'"
 
 echo -e "${GREEN}New disk prepared${NC}"
 echo
@@ -287,14 +336,14 @@ echo "This may take several hours depending on the amount of data"
 echo
 
 # Run snapraid fix for the entire disk
-if snapraid fix -d "$failed_disk_name" -l /var/log/snapraid-fix.log; then
+if nas_sudo "snapraid fix -d '$failed_disk_name' -l /var/log/snapraid-fix.log"; then
     echo
     echo -e "${GREEN}Recovery completed successfully${NC}"
     echo
 else
     echo
     echo -e "${RED}X Recovery failed or had errors${NC}"
-    echo "Check the log: /var/log/snapraid-fix.log"
+    echo "Check the log: ssh $SSH_TARGET 'cat /var/log/snapraid-fix.log'"
     echo
     exit 1
 fi
@@ -312,7 +361,7 @@ echo "Verifying recovered data..."
 echo
 
 # Run scrub on recovered disk
-if snapraid scrub -p 100 -d "$failed_disk_name"; then
+if nas_sudo "snapraid scrub -p 100 -d '$failed_disk_name'"; then
     echo
     echo -e "${GREEN}Verification complete - Data is correct${NC}"
 else
@@ -324,7 +373,7 @@ fi
 echo
 
 # Show final status
-df -h "$failed_disk_path"
+nas "df -h '$failed_disk_path'"
 
 echo
 separator
@@ -343,27 +392,23 @@ echo "Recommended next steps:"
 echo
 
 echo "1. Verify that all files are accessible:"
-echo "   ls -lah $failed_disk_path"
+echo "   ssh $SSH_TARGET 'ls -lah $failed_disk_path'"
 echo
 
 echo "2. Run a full sync to update parity:"
-echo "   sudo snapraid sync"
+echo "   ssh $SSH_TARGET 'sudo snapraid sync'"
 echo
 
 echo "3. Monitor the new disk over the next few weeks:"
-echo "   sudo smartctl -a $new_device"
+echo "   ssh $SSH_TARGET 'sudo smartctl -a $new_device'"
 echo
 
 echo "4. Run scrub periodically to verify integrity:"
-echo "   sudo snapraid scrub -p 10"
+echo "   ssh $SSH_TARGET 'sudo snapraid scrub -p 10'"
 echo
 
 separator
 echo
 
-echo "Recovery log saved at: /var/log/snapraid-fix.log"
-echo
-
-echo -e "${CYAN}For more information about SnapRAID:${NC}"
-echo "  cat /etc/nixos-nas/snapraid-commands.txt"
+echo "Recovery log: ssh $SSH_TARGET 'cat /var/log/snapraid-fix.log'"
 echo

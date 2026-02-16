@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, nasConfig, ... }:
 
 {
   environment.systemPackages = with pkgs; [
@@ -6,15 +6,17 @@
     mergerfs-tools
   ];
 
-  systemd.tmpfiles.rules = [
-    "d /mnt/disk1 0755 nas nas -"
-    "d /mnt/disk2 0755 nas nas -"
-    "d /mnt/parity 0755 nas nas -"
-    "d /mnt/storage 0755 nas nas -"
-    "d /mnt/storage/media 0775 nas nas -"
-    "d /mnt/storage/files 0775 nas nas -"
-    "d /mnt/storage/backups 0775 nas nas -"
-    "d /mnt/storage/downloads 0775 nas nas -"
+  systemd.tmpfiles.rules = let
+    user = nasConfig.adminUser;
+  in [
+    "d /mnt/disk1 0755 ${user} ${user} -"
+    "d /mnt/disk2 0755 ${user} ${user} -"
+    "d /mnt/disk3 0755 ${user} ${user} -"
+    "d /mnt/storage 0755 ${user} ${user} -"
+    "d /mnt/storage/media 0775 ${user} ${user} -"
+    "d /mnt/storage/files 0775 ${user} ${user} -"
+    "d /mnt/storage/backups 0775 ${user} ${user} -"
+    "d /mnt/storage/downloads 0775 ${user} ${user} -"
   ];
 
   fileSystems."/mnt/storage" = {
@@ -44,10 +46,12 @@
       after = [
         "mnt-disk1.mount"
         "mnt-disk2.mount"
+        "mnt-disk3.mount"
       ];
       requires = [
         "mnt-disk1.mount"
         "mnt-disk2.mount"
+        "mnt-disk3.mount"
       ];
     }
   ];
@@ -79,12 +83,8 @@
       df -h /mnt/storage
       echo
 
-      echo "SNAPRAID PARITY:"
-      df -h /mnt/parity
-      echo
-
       echo "=== SMART Status ==="
-      for disk in /dev/sd[abc]; do
+      for disk in /dev/sd[a-d]; do
         if [ -e "$disk" ]; then
           echo
           echo "DISK: $disk"

@@ -1,5 +1,5 @@
 {
-  description = "NixOS NAS Configuration - MergerFS + SnapRAID";
+  description = "NixOS NAS Configuration - MergerFS";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -37,7 +37,6 @@
           ./modules/users.nix
           ./modules/hardware.nix
           ./modules/storage-mergerfs.nix
-          ./modules/snapraid.nix
           ./modules/networking.nix
           ./modules/services.nix
           ./modules/monitoring.nix

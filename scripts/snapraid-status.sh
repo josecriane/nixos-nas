@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# SnapRAID Status - Detailed SnapRAID verification
+# SnapRAID Status - Detailed SnapRAID verification (runs remotely via SSH)
 #
 
 set -euo pipefail
@@ -14,6 +14,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$PROJECT_DIR/config.nix"
+
 separator() {
     echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
 }
@@ -22,10 +26,55 @@ header() {
     echo -e "\n${CYAN}${BOLD}=== $1 ===${NC}\n"
 }
 
-# Check that we are root
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}This script must be run as root${NC}"
-    echo "Use: sudo $0"
+# ============================================================================
+# CHECK LOCAL CONFIGURATION
+# ============================================================================
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo -e "${RED}Error: config.nix not found${NC}"
+    echo "Run first: ./scripts/setup.sh"
+    exit 1
+fi
+
+# Read connection details from config.nix
+NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+
+SSH_OPTS="-o StrictHostKeyChecking=no"
+SSH_TARGET="$ADMIN_USER@$NAS_IP"
+
+# Helper to run commands on the NAS
+nas() {
+    ssh $SSH_OPTS "$SSH_TARGET" "$@"
+}
+
+nas_sudo() {
+    ssh $SSH_OPTS "$SSH_TARGET" "sudo $*"
+}
+
+# ============================================================================
+# CONNECTIVITY CHECK
+# ============================================================================
+
+echo -e "${YELLOW}Connecting to NAS ($HOSTNAME at $NAS_IP)...${NC}"
+
+if ! ping -c 1 -W 3 "$NAS_IP" &>/dev/null; then
+    echo -e "${RED}Cannot reach $NAS_IP${NC}"
+    exit 1
+fi
+
+if ! ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
+    echo -e "${RED}Cannot connect via SSH to $SSH_TARGET${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Connected${NC}"
+echo
+
+# Check snapraid on NAS
+if ! nas "command -v snapraid" &>/dev/null; then
+    echo -e "${RED}SnapRAID is not installed on the NAS${NC}"
     exit 1
 fi
 
@@ -40,21 +89,12 @@ cat << "EOF"
 EOF
 
 # ============================================================================
-# VERIFY INSTALLATION
-# ============================================================================
-
-if ! command -v snapraid &> /dev/null; then
-    echo -e "${RED}SnapRAID is not installed${NC}"
-    exit 1
-fi
-
-# ============================================================================
 # GENERAL STATUS
 # ============================================================================
 
 header "GENERAL STATUS"
 
-snapraid status
+nas_sudo "snapraid status"
 
 separator
 
@@ -67,7 +107,7 @@ header "DIFFERENCES SINCE LAST SYNC"
 echo -e "${YELLOW}Running diff (may take a moment)...${NC}"
 echo
 
-snapraid diff
+nas_sudo "snapraid diff"
 
 separator
 
@@ -77,43 +117,29 @@ separator
 
 header "SYNC HISTORY"
 
+nas "
 if [ -f /var/log/snapraid-sync.log ]; then
-    echo -e "${BOLD}Last 5 syncs:${NC}"
+    echo 'Last syncs:'
     echo
-
-    grep -E "\[.*\] (Starting|completed|failed)" /var/log/snapraid-sync.log 2>/dev/null | tail -10 | while read line; do
-        if echo "$line" | grep -q "completed successfully"; then
-            echo -e "  ${GREEN}OK${NC} $line"
-        elif echo "$line" | grep -q "failed"; then
-            echo -e "  ${RED}X${NC} $line"
-        else
-            echo "  $line"
-        fi
-    done
+    grep -E '\[.*\] (Starting|completed|failed)' /var/log/snapraid-sync.log 2>/dev/null | tail -10
 else
-    echo "  No sync logs available"
+    echo '  No sync logs available'
 fi
+"
 
 echo
 
 header "SCRUB HISTORY"
 
+nas "
 if [ -f /var/log/snapraid-scrub.log ]; then
-    echo -e "${BOLD}Last 5 scrubs:${NC}"
+    echo 'Last scrubs:'
     echo
-
-    grep -E "\[.*\] (Starting|completed|failed)" /var/log/snapraid-scrub.log 2>/dev/null | tail -10 | while read line; do
-        if echo "$line" | grep -q "completed successfully"; then
-            echo -e "  ${GREEN}OK${NC} $line"
-        elif echo "$line" | grep -q "failed"; then
-            echo -e "  ${RED}X${NC} $line"
-        else
-            echo "  $line"
-        fi
-    done
+    grep -E '\[.*\] (Starting|completed|failed)' /var/log/snapraid-scrub.log 2>/dev/null | tail -10
 else
-    echo "  No scrub logs available"
+    echo '  No scrub logs available'
 fi
+"
 
 echo
 
@@ -125,7 +151,7 @@ separator
 
 header "DISK SMART STATUS"
 
-snapraid smart || echo -e "${YELLOW}Could not run SMART check${NC}"
+nas_sudo "snapraid smart" || echo -e "${YELLOW}Could not run SMART check${NC}"
 
 separator
 
@@ -138,22 +164,20 @@ header "SYSTEMD TIMERS"
 echo -e "${BOLD}Timer status:${NC}"
 echo
 
-systemctl list-timers --no-pager --all | grep -E "NEXT|snapraid" || echo "No timers configured"
+nas "systemctl list-timers --no-pager --all | grep -E 'NEXT|snapraid'" || echo "No timers configured"
 
 echo
 echo -e "${BOLD}Service status:${NC}"
 echo
 
+nas "
 for service in snapraid-sync snapraid-scrub; do
-    if systemctl list-unit-files | grep -q "$service.service"; then
-        status=$(systemctl is-active "$service.service" 2>/dev/null || echo "inactive")
-        if [ "$status" = "active" ]; then
-            echo -e "  ${GREEN}OK${NC} $service: ${GREEN}$status${NC}"
-        else
-            echo -e "  ${BLUE}o${NC} $service: $status"
-        fi
+    if systemctl list-unit-files | grep -q \"\$service.service\"; then
+        status=\$(systemctl is-active \"\$service.service\" 2>/dev/null || echo 'inactive')
+        echo \"  \$service: \$status\"
     fi
 done
+"
 
 echo
 
@@ -168,18 +192,19 @@ header "CONTENT FILES"
 echo -e "${BOLD}Content file locations:${NC}"
 echo
 
-# Find content files
+nas "
 for location in /var/snapraid/snapraid.content /mnt/disk*/snapraid.content; do
-    if [ -f "$location" ]; then
-        size=$(du -h "$location" | cut -f1)
-        mtime=$(stat -c %y "$location" | cut -d'.' -f1)
-        echo -e "  ${GREEN}OK${NC} $location"
-        echo "    Size: $size"
-        echo "    Modified: $mtime"
+    if [ -f \"\$location\" ]; then
+        size=\$(du -h \"\$location\" | cut -f1)
+        mtime=\$(stat -c %y \"\$location\" | cut -d'.' -f1)
+        echo \"  OK \$location\"
+        echo \"    Size: \$size\"
+        echo \"    Modified: \$mtime\"
     else
-        echo -e "  ${YELLOW}X${NC} $location (does not exist)"
+        echo \"  X \$location (does not exist)\"
     fi
 done
+"
 
 echo
 
@@ -191,18 +216,19 @@ separator
 
 header "CURRENT CONFIGURATION"
 
+nas "
 if [ -f /etc/snapraid.conf ]; then
-    echo -e "${BOLD}Configured disks:${NC}"
+    echo 'Configured disks:'
     echo
-    grep -E "^(parity|data)" /etc/snapraid.conf | sed 's/^/  /'
+    grep -E '^(parity|data)' /etc/snapraid.conf | sed 's/^/  /'
     echo
-
-    echo -e "${BOLD}Exclusions:${NC}"
+    echo 'Exclusions:'
     echo
-    grep -E "^exclude" /etc/snapraid.conf | sed 's/^/  /' || echo "  No exclusions"
+    grep -E '^exclude' /etc/snapraid.conf | sed 's/^/  /' || echo '  No exclusions'
 else
-    echo -e "${RED}Configuration file not found: /etc/snapraid.conf${NC}"
+    echo 'Configuration file not found: /etc/snapraid.conf'
 fi
+"
 
 echo
 
@@ -214,61 +240,36 @@ separator
 
 header "RECOMMENDATIONS"
 
-# Calculate days since last sync
-if [ -f /var/log/snapraid-sync.log ]; then
-    last_sync=$(grep "completed successfully" /var/log/snapraid-sync.log | tail -1 | grep -oP '\[\K[^\]]+' || echo "")
-
-    if [ -n "$last_sync" ]; then
-        last_sync_ts=$(date -d "$last_sync" +%s 2>/dev/null || echo 0)
-        now_ts=$(date +%s)
-        days_since=$((( now_ts - last_sync_ts ) / 86400))
-
-        if [ $days_since -gt 7 ]; then
-            echo -e "${RED}Warning${NC} It has been $days_since days since the last successful sync"
-            echo "  Recommendation: Run sync soon"
-            echo "  Command: sudo snapraid sync"
-            echo
-        elif [ $days_since -gt 3 ]; then
-            echo -e "${YELLOW}Warning${NC} It has been $days_since days since the last sync"
-            echo "  Consider running sync"
-            echo
-        else
-            echo -e "${GREEN}OK${NC} Last sync $days_since days ago - OK"
-            echo
-        fi
-    fi
-fi
-
+nas_sudo "
 # Check pending differences
-diff_output=$(snapraid diff 2>&1 || true)
-if echo "$diff_output" | grep -q "equal\|No differences"; then
-    echo -e "${GREEN}OK${NC} No pending differences to sync"
+diff_output=\$(snapraid diff 2>&1 || true)
+if echo \"\$diff_output\" | grep -q 'equal\|No differences'; then
+    echo 'OK - No pending differences to sync'
 else
-    # Count changes
-    added=$(echo "$diff_output" | grep -c "add" || echo 0)
-    removed=$(echo "$diff_output" | grep -c "remove" || echo 0)
-    updated=$(echo "$diff_output" | grep -c "update" || echo 0)
+    added=\$(echo \"\$diff_output\" | grep -c 'add' || echo 0)
+    removed=\$(echo \"\$diff_output\" | grep -c 'remove' || echo 0)
+    updated=\$(echo \"\$diff_output\" | grep -c 'update' || echo 0)
 
-    if [ $added -gt 0 ] || [ $removed -gt 0 ] || [ $updated -gt 0 ]; then
-        echo -e "${YELLOW}Warning${NC} There are pending changes:"
-        [ $added -gt 0 ] && echo "  - Files added: $added"
-        [ $removed -gt 0 ] && echo "  - Files removed: $removed"
-        [ $updated -gt 0 ] && echo "  - Files modified: $updated"
+    if [ \$added -gt 0 ] || [ \$removed -gt 0 ] || [ \$updated -gt 0 ]; then
+        echo 'Warning - There are pending changes:'
+        [ \$added -gt 0 ] && echo \"  - Files added: \$added\"
+        [ \$removed -gt 0 ] && echo \"  - Files removed: \$removed\"
+        [ \$updated -gt 0 ] && echo \"  - Files modified: \$updated\"
         echo
-        echo "  Recommendation: Run sync to protect the changes"
-        echo "  Command: sudo snapraid sync"
+        echo '  Recommendation: Run sync to protect the changes'
+        echo '  Command: sudo snapraid sync'
     fi
 fi
+"
 
 echo
 
 separator
 echo
 
-echo -e "${CYAN}Useful commands:${NC}"
+echo -e "${CYAN}Useful commands (run on NAS via ssh $SSH_TARGET):${NC}"
 echo "  - Sync:              sudo snapraid sync"
 echo "  - Verify integrity:  sudo snapraid scrub -p 10"
 echo "  - View differences:  sudo snapraid diff"
 echo "  - Recover file:      sudo snapraid fix -f /path/to/file"
-echo "  - View help:         cat /etc/nixos-nas/snapraid-commands.txt"
 echo

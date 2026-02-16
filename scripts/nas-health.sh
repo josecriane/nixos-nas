@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# NAS Health Check - General system status
+# NAS Health Check - General system status (runs remotely via SSH)
 #
 
 set -euo pipefail
@@ -14,6 +14,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$PROJECT_DIR/config.nix"
+
 separator() {
     echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
 }
@@ -21,6 +25,48 @@ separator() {
 header() {
     echo -e "\n${CYAN}${BOLD}=== $1 ===${NC}\n"
 }
+
+# ============================================================================
+# CHECK LOCAL CONFIGURATION
+# ============================================================================
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo -e "${RED}Error: config.nix not found${NC}"
+    echo "Run first: ./scripts/setup.sh"
+    exit 1
+fi
+
+# Read connection details from config.nix
+NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+
+SSH_OPTS="-o StrictHostKeyChecking=no"
+SSH_TARGET="$ADMIN_USER@$NAS_IP"
+
+# Helper to run commands on the NAS
+nas() {
+    ssh $SSH_OPTS "$SSH_TARGET" "$@"
+}
+
+# ============================================================================
+# CONNECTIVITY CHECK
+# ============================================================================
+
+echo -e "${YELLOW}Connecting to NAS ($HOSTNAME at $NAS_IP)...${NC}"
+
+if ! ping -c 1 -W 3 "$NAS_IP" &>/dev/null; then
+    echo -e "${RED}Cannot reach $NAS_IP${NC}"
+    exit 1
+fi
+
+if ! ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
+    echo -e "${RED}Cannot connect via SSH to $SSH_TARGET${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Connected${NC}"
+echo
 
 # Banner
 cat << "EOF"
@@ -38,10 +84,13 @@ EOF
 
 header "SYSTEM INFORMATION"
 
-echo -e "${BOLD}Hostname:${NC} $(hostname)"
-echo -e "${BOLD}Uptime:${NC}   $(uptime -p)"
-echo -e "${BOLD}Kernel:${NC}   $(uname -r)"
-echo -e "${BOLD}NixOS:${NC}    $(nixos-version)"
+nas '
+echo "Hostname: $(hostname)"
+echo "Uptime:   $(uptime | sed "s/.*up /up /;s/,  load.*//")"
+echo "Kernel:   $(uname -r)"
+echo "NixOS:    $(nixos-version)"
+'
+
 echo
 
 separator
@@ -52,19 +101,17 @@ separator
 
 header "CPU AND MEMORY"
 
-# CPU
-echo -e "${BOLD}CPU:${NC}"
-lscpu | grep -E "Model name|CPU\(s\)|CPU MHz" | sed 's/^/  /'
+nas '
+echo "CPU:"
+lscpu | grep -E "Model name|CPU\(s\)|CPU MHz" | sed "s/^/  /"
 echo
-
-# Load
-echo -e "${BOLD}Load (1, 5, 15 min):${NC}"
-cat /proc/loadavg | awk '{printf "  %s, %s, %s\n", $1, $2, $3}'
+echo "Load (1, 5, 15 min):"
+awk "{printf \"  %s, %s, %s\n\", \$1, \$2, \$3}" /proc/loadavg
 echo
+echo "Memory:"
+free -h | grep -E "Mem|Swap" | awk "{printf \"  %-6s Total: %6s  Used: %6s  Free: %6s\n\", \$1, \$2, \$3, \$4}"
+'
 
-# Memory
-echo -e "${BOLD}Memory:${NC}"
-free -h | grep -E "Mem|Swap" | awk '{printf "  %-6s Total: %6s  Used: %6s  Free: %6s\n", $1, $2, $3, $4}'
 echo
 
 separator
@@ -75,31 +122,22 @@ separator
 
 header "STORAGE - INDIVIDUAL DISKS"
 
-df -h /mnt/disk* 2>/dev/null | grep -v "Filesystem" || echo "  No disks mounted"
+nas "df -h /mnt/disk* 2>/dev/null | grep -v 'Filesystem'" || echo "  No disks mounted"
+
 echo
 
 header "STORAGE - MERGERFS POOL"
 
+nas '
 if mountpoint -q /mnt/storage; then
     df -h /mnt/storage | grep -v "Filesystem"
     echo
-
-    # Detailed breakdown
-    echo -e "${BOLD}Breakdown by directory:${NC}"
-    du -sh /mnt/storage/* 2>/dev/null | sort -h | awk '{printf "  %-30s %s\n", $2, $1}' || echo "  No data"
+    echo "Breakdown by directory:"
+    du -sh /mnt/storage/* 2>/dev/null | sort -h | awk "{printf \"  %-30s %s\n\", \$2, \$1}" || echo "  No data"
 else
-    echo -e "${RED}  /mnt/storage IS NOT MOUNTED${NC}"
+    echo "  /mnt/storage IS NOT MOUNTED"
 fi
-
-echo
-
-header "STORAGE - SNAPRAID PARITY"
-
-if mountpoint -q /mnt/parity; then
-    df -h /mnt/parity | grep -v "Filesystem"
-else
-    echo -e "${RED}  /mnt/parity IS NOT MOUNTED${NC}"
-fi
+'
 
 echo
 
@@ -111,38 +149,36 @@ separator
 
 header "DISK SMART STATUS"
 
-for disk in /dev/sd[abc]; do
+nas '
+for disk in /dev/sd[a-z]; do
     if [ -b "$disk" ]; then
-        echo -e "${BOLD}Disk: $disk${NC}"
+        info=$(sudo smartctl -i "$disk" 2>/dev/null)
+        model=$(echo "$info" | grep "Device Model" | cut -d: -f2 | xargs)
 
-        # Model
-        model=$(sudo smartctl -i "$disk" 2>/dev/null | grep "Device Model" | cut -d: -f2 | xargs)
-        serial=$(sudo smartctl -i "$disk" 2>/dev/null | grep "Serial Number" | cut -d: -f2 | xargs)
+        # Skip drives without SMART support (USB sticks, etc.)
+        if [ -z "$model" ]; then
+            continue
+        fi
 
+        echo "Disk: $disk"
+        serial=$(echo "$info" | grep "Serial Number" | cut -d: -f2 | xargs)
         echo "  Model:  $model"
         echo "  Serial: $serial"
 
-        # SMART status
         if sudo smartctl -H "$disk" 2>/dev/null | grep -q "PASSED"; then
-            echo -e "  Status: ${GREEN}PASSED${NC}"
+            echo "  Status: PASSED"
         else
-            echo -e "  Status: ${RED}FAILED${NC}"
+            echo "  Status: FAILED"
         fi
 
-        # Temperature
-        temp=$(sudo smartctl -A "$disk" 2>/dev/null | grep "Temperature_Celsius" | awk '{print $10}')
+        attrs=$(sudo smartctl -A "$disk" 2>/dev/null)
+
+        temp=$(echo "$attrs" | grep "Temperature_Celsius" | awk "{print \$10}" | grep -o "^[0-9]*")
         if [ -n "$temp" ]; then
-            if [ "$temp" -lt 45 ]; then
-                echo -e "  Temp:   ${GREEN}${temp}C${NC}"
-            elif [ "$temp" -lt 55 ]; then
-                echo -e "  Temp:   ${YELLOW}${temp}C${NC}"
-            else
-                echo -e "  Temp:   ${RED}${temp}C${NC}"
-            fi
+            echo "  Temp:   ${temp}C"
         fi
 
-        # Power on hours
-        hours=$(sudo smartctl -A "$disk" 2>/dev/null | grep "Power_On_Hours" | awk '{print $10}')
+        hours=$(echo "$attrs" | grep "Power_On_Hours" | awk "{print \$10}" | grep -o "^[0-9]*")
         if [ -n "$hours" ]; then
             days=$((hours / 24))
             echo "  Hours:  $hours ($days days)"
@@ -151,41 +187,7 @@ for disk in /dev/sd[abc]; do
         echo
     fi
 done
-
-separator
-
-# ============================================================================
-# SNAPRAID
-# ============================================================================
-
-header "SNAPRAID"
-
-if command -v snapraid &> /dev/null; then
-    echo -e "${BOLD}SnapRAID Status:${NC}"
-    echo
-
-    # Run snapraid status and capture output
-    if sudo snapraid status 2>&1 | grep -q "No status file found"; then
-        echo -e "  ${YELLOW}SnapRAID has not been synced yet${NC}"
-        echo "  Run: sudo snapraid sync"
-    else
-        sudo snapraid status 2>&1 | head -20 | sed 's/^/  /'
-    fi
-else
-    echo -e "${RED}  SnapRAID is not installed${NC}"
-fi
-
-echo
-
-# Last sync
-if [ -f /var/log/snapraid-sync.log ]; then
-    echo -e "${BOLD}Last sync:${NC}"
-    tail -5 /var/log/snapraid-sync.log | sed 's/^/  /'
-else
-    echo "  No sync logs"
-fi
-
-echo
+'
 
 separator
 
@@ -195,27 +197,17 @@ separator
 
 header "SERVICES"
 
-check_service() {
-    local service=$1
-    local name=$2
-
+nas '
+for pair in "samba-smbd:Samba" "nfs-server:NFS" "sshd:SSH" "smartd:SMART Monitoring" "cockpit.socket:Cockpit" "filebrowser:File Browser"; do
+    service=${pair%%:*}
+    name=${pair##*:}
     if systemctl is-active --quiet "$service"; then
-        echo -e "  ${GREEN}OK${NC} $name: ${GREEN}active${NC}"
+        echo "  OK $name: active"
     else
-        echo -e "  ${RED}X${NC} $name: ${RED}inactive${NC}"
+        echo "  X  $name: inactive"
     fi
-}
-
-check_service "smbd" "Samba"
-check_service "nfs-server" "NFS"
-check_service "sshd" "SSH"
-check_service "smartd" "SMART Monitoring"
-
-echo
-
-# SnapRAID timers
-echo -e "${BOLD}SnapRAID Timers:${NC}"
-systemctl list-timers --no-pager | grep snapraid | awk '{printf "  %-30s %s %s\n", $NF, $1, $2}' || echo "  Not configured"
+done
+'
 
 echo
 
@@ -227,32 +219,25 @@ separator
 
 header "NETWORK"
 
-# Main interface
-default_iface=$(ip route | grep default | awk '{print $5}' | head -1)
-
+nas '
+default_iface=$(ip route | grep default | awk "{print \$5}" | head -1)
 if [ -n "$default_iface" ]; then
-    echo -e "${BOLD}Main interface:${NC} $default_iface"
-
-    # IP
-    ip_addr=$(ip addr show "$default_iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1)
-    echo -e "${BOLD}IP:${NC}             $ip_addr"
-
-    # Gateway
-    gateway=$(ip route | grep default | awk '{print $3}' | head -1)
-    echo -e "${BOLD}Gateway:${NC}        $gateway"
-
-    # DNS
-    echo -e "${BOLD}DNS:${NC}"
-    grep nameserver /etc/resolv.conf | awk '{print "  " $2}'
+    echo "Main interface: $default_iface"
+    ip_addr=$(ip addr show "$default_iface" 2>/dev/null | grep "inet " | awk "{print \$2}" | cut -d"/" -f1)
+    echo "IP:             $ip_addr"
+    gateway=$(ip route | grep default | awk "{print \$3}" | head -1)
+    echo "Gateway:        $gateway"
+    echo "DNS:"
+    grep nameserver /etc/resolv.conf | awk "{print \"  \" \$2}"
 else
-    echo -e "${RED}No network interface detected${NC}"
+    echo "No network interface detected"
 fi
+'
 
 echo
 
-# Open ports
 echo -e "${BOLD}Listening ports:${NC}"
-sudo ss -tuln | grep LISTEN | awk '{printf "  %-8s %-25s\n", $1, $5}' | sort -u
+nas "ss -tuln | grep LISTEN | awk '{printf \"  %-8s %-25s\n\", \$1, \$5}' | sort -u"
 
 echo
 
@@ -264,49 +249,49 @@ separator
 
 header "SUMMARY"
 
-# Calculate overall status
+nas '
 errors=0
 warnings=0
 
 # Check mounted disks
 if ! mountpoint -q /mnt/storage; then
-    ((errors++))
+    errors=$((errors + 1))
 fi
 
-# Check SMART
-for disk in /dev/sd[abc]; do
+# Check SMART (skip drives without SMART support)
+for disk in /dev/sd[a-z]; do
     if [ -b "$disk" ]; then
-        if ! sudo smartctl -H "$disk" 2>/dev/null | grep -q "PASSED"; then
-            ((errors++))
+        model=$(sudo smartctl -i "$disk" 2>/dev/null | grep "Device Model" | cut -d: -f2 | xargs)
+        if [ -n "$model" ]; then
+            if ! sudo smartctl -H "$disk" 2>/dev/null | grep -q "PASSED"; then
+                errors=$((errors + 1))
+            fi
         fi
     fi
 done
 
 # Check services
-for service in smbd nfs-server sshd; do
+for service in samba-smbd nfs-server sshd; do
     if ! systemctl is-active --quiet "$service"; then
-        ((warnings++))
+        warnings=$((warnings + 1))
     fi
 done
 
-# Show summary
 if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
-    echo -e "${GREEN}${BOLD}OK - System OK - No problems detected${NC}"
+    echo "OK - System OK - No problems detected"
 elif [ $errors -eq 0 ]; then
-    echo -e "${YELLOW}${BOLD}Warning - System OK - $warnings warnings${NC}"
+    echo "Warning - System OK - $warnings warnings"
 else
-    echo -e "${RED}${BOLD}X - Problems detected - $errors errors, $warnings warnings${NC}"
+    echo "X - Problems detected - $errors errors, $warnings warnings"
 fi
+'
 
 echo
 separator
 echo
 
-echo -e "${CYAN}For more details:${NC}"
+echo -e "${CYAN}For more details (run via ssh $SSH_TARGET):${NC}"
 echo "  - View logs:        journalctl -xe"
 echo "  - SMART status:     sudo smartctl -a /dev/sdX"
-echo "  - SnapRAID status:  sudo snapraid status"
 echo "  - MergerFS disks:   df -h /mnt/disk*"
 echo
-
-exit $errors
