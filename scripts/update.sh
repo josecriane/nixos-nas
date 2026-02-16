@@ -1,36 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-CONFIG_FILE="$PROJECT_DIR/config.nix"
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+resolve_machine "${1:-}"
+read_config
 
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║         NixOS NAS - Update Configuration                     ║${NC}"
+echo -e "${BLUE}║         NixOS NAS - Update Configuration ($MACHINE)          ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-
-# Check that config.nix exists
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo -e "${RED}Error: config.nix not found${NC}"
-    echo "Run first: ./scripts/setup.sh"
-    exit 1
-fi
-
-# Functions
-confirm() {
-    local prompt="$1"
-    read -rp "$(echo -e "${YELLOW}$prompt${NC} [y/N]: ")" response
-    [[ "$response" =~ ^[Yy]$ ]]
-}
 
 toggle_bool() {
     local current="$1"
@@ -41,19 +19,15 @@ toggle_bool() {
     fi
 }
 
-# Read current configuration
-NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-
 # Read service status
 SVC_COCKPIT=$(grep -A5 'services = {' "$CONFIG_FILE" | grep 'cockpit' | grep -o 'true\|false')
 SVC_FILEBROWSER=$(grep -A5 'services = {' "$CONFIG_FILE" | grep 'filebrowser' | grep -o 'true\|false')
 SVC_AUTHENTIK=$(grep -A5 'services = {' "$CONFIG_FILE" | grep 'authentikIntegration' | grep -o 'true\|false' || echo "false")
 LDAP_ENABLED=$(grep -A5 'ldap = {' "$CONFIG_FILE" | grep 'enable' | grep -o 'true\|false' || echo "false")
 
-echo -e "${GREEN}NAS:${NC} $HOSTNAME ($NAS_IP)"
-echo -e "${GREEN}User:${NC} $ADMIN_USER"
+echo -e "${GREEN}Machine:${NC} $MACHINE"
+echo -e "${GREEN}NAS:${NC}     $HOSTNAME ($NAS_IP)"
+echo -e "${GREEN}User:${NC}    $ADMIN_USER"
 echo ""
 
 # Show current configuration
@@ -138,9 +112,6 @@ echo -e "${GREEN}SSH working${NC}"
 # ═══════════════════════════════════════════════════════════════
 echo -e "\n${YELLOW}Verifying NAS SSH keys...${NC}"
 
-NAS_KEY_DIR="$PROJECT_DIR/secrets/nas-keys"
-SECRETS_DIR="$PROJECT_DIR/secrets"
-
 # Get current NAS key
 CURRENT_NAS_KEY=$(ssh -o StrictHostKeyChecking=no "$ADMIN_USER@$NAS_IP" "cat /etc/ssh/ssh_host_ed25519_key.pub" 2>/dev/null)
 
@@ -148,14 +119,14 @@ if [[ -z "$CURRENT_NAS_KEY" ]]; then
     echo -e "${YELLOW}Warning: Could not get NAS SSH key${NC}"
 else
     # Check if it matches saved key
-    if [[ -f "$NAS_KEY_DIR/ssh_host_ed25519_key.pub" ]]; then
-        SAVED_NAS_KEY=$(cat "$NAS_KEY_DIR/ssh_host_ed25519_key.pub")
+    if [[ -f "$KEY_DIR/ssh_host_ed25519_key.pub" ]]; then
+        SAVED_NAS_KEY=$(cat "$KEY_DIR/ssh_host_ed25519_key.pub")
         if [[ "$CURRENT_NAS_KEY" != "$SAVED_NAS_KEY" ]]; then
             echo -e "${YELLOW}Warning: NAS SSH key has changed${NC}"
             echo -e "${YELLOW}  Re-encrypting secrets...${NC}"
 
             # Save new key
-            echo "$CURRENT_NAS_KEY" > "$NAS_KEY_DIR/ssh_host_ed25519_key.pub"
+            echo "$CURRENT_NAS_KEY" > "$KEY_DIR/ssh_host_ed25519_key.pub"
 
             # Convert to age
             if command -v ssh-to-age &>/dev/null; then
@@ -165,32 +136,17 @@ else
             fi
 
             if [[ -n "$NAS_AGE_KEY" ]]; then
-                # Update secrets.nix
-                ADMIN_KEY=$(grep "admin = " "$SECRETS_DIR/secrets.nix" | sed 's/.*"\(.*\)".*/\1/')
-                cat > "$SECRETS_DIR/secrets.nix" << EOF
-let
-  # NAS public key (age format, updated by update.sh)
-  nas = "$NAS_AGE_KEY";
-
-  # Your public key for encrypting/decrypting
-  admin = "$ADMIN_KEY";
-
-  allKeys = [ nas admin ];
-in
-{
-  "samba-password.age".publicKeys = allKeys;
-}
-EOF
+                # Update the machine's key in secrets.nix
+                sed -i "s|$MACHINE = \"age1[a-z0-9]*\";|$MACHINE = \"$NAS_AGE_KEY\";|" "$SECRETS_DIR/secrets.nix"
                 echo -e "${GREEN}secrets.nix updated${NC}"
 
-                # Re-encrypt samba-password if exists and we can read the password
-                if [[ -f "$SECRETS_DIR/samba-password.age" ]]; then
+                # Re-encrypt samba-password if exists
+                if [[ -f "$SECRETS_DIR/$MACHINE/samba-password.age" ]]; then
                     echo -e "${YELLOW}  Samba secret needs to be re-encrypted${NC}"
-                    echo -e "${YELLOW}  Run ./scripts/setup.sh to configure the password again${NC}"
+                    echo -e "${YELLOW}  Run ./scripts/setup.sh $MACHINE to configure the password again${NC}"
                     echo -e "${YELLOW}  Or configure it manually after: sudo smbpasswd -a $ADMIN_USER${NC}"
 
-                    # Remove old secret to avoid agenix errors
-                    rm -f "$SECRETS_DIR/samba-password.age"
+                    rm -f "$SECRETS_DIR/$MACHINE/samba-password.age"
                     echo -e "${GREEN}Samba secret removed (configure manually after)${NC}"
                 fi
             fi
@@ -203,7 +159,7 @@ fi
 # Verify configuration
 echo -e "\n${YELLOW}Verifying configuration...${NC}"
 cd "$PROJECT_DIR"
-if ! nix build .#nixosConfigurations.nas.config.system.build.toplevel --impure --no-link 2>/dev/null; then
+if ! nix build ".#nixosConfigurations.$MACHINE.config.system.build.toplevel" --impure --no-link 2>/dev/null; then
     echo -e "${RED}Error: Configuration has errors${NC}"
     exit 1
 fi
@@ -211,21 +167,22 @@ echo -e "${GREEN}Configuration valid${NC}"
 
 # Confirm update
 echo ""
-if ! confirm "Apply changes to NAS?"; then
+if ! confirm "Apply changes to $MACHINE?"; then
     echo "Update cancelled."
     exit 0
 fi
 
 # Update
-echo -e "\n${BLUE}=== Updating NAS ===${NC}\n"
+echo -e "\n${BLUE}=== Updating $MACHINE ===${NC}\n"
 
 NIX_SSHOPTS="-o StrictHostKeyChecking=no" nixos-rebuild switch \
-    --flake .#nas \
+    --flake ".#$MACHINE" \
     --target-host "$ADMIN_USER@$NAS_IP" \
     --use-remote-sudo \
-    --build-host "$ADMIN_USER@$NAS_IP"
+    --build-host "$ADMIN_USER@$NAS_IP" \
+    --impure
 
-echo -e "\n${GREEN}NAS updated successfully${NC}"
+echo -e "\n${GREEN}$MACHINE updated successfully${NC}"
 echo ""
 
 # Show status

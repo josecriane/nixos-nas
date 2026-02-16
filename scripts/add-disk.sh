@@ -5,79 +5,10 @@
 
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-CONFIG_FILE="$PROJECT_DIR/config.nix"
-
-separator() {
-    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
-}
-
-header() {
-    echo -e "\n${CYAN}${BOLD}=== $1 ===${NC}\n"
-}
-
-confirm() {
-    local prompt="$1"
-    local response
-    read -r -p "$(echo -e ${YELLOW}${prompt}${NC} [y/N]: )" response
-    [[ "${response,,}" == "y" ]]
-}
-
-# ============================================================================
-# CHECK LOCAL CONFIGURATION
-# ============================================================================
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo -e "${RED}Error: config.nix not found${NC}"
-    echo "Run first: ./scripts/setup.sh"
-    exit 1
-fi
-
-# Read connection details from config.nix
-NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-
-SSH_OPTS="-o StrictHostKeyChecking=no"
-SSH_TARGET="$ADMIN_USER@$NAS_IP"
-
-# Helper to run commands on the NAS
-nas() {
-    ssh $SSH_OPTS "$SSH_TARGET" "$@"
-}
-
-nas_sudo() {
-    ssh $SSH_OPTS "$SSH_TARGET" "sudo $*"
-}
-
-# ============================================================================
-# CONNECTIVITY CHECK
-# ============================================================================
-
-echo -e "${YELLOW}Connecting to NAS ($HOSTNAME at $NAS_IP)...${NC}"
-
-if ! ping -c 1 -W 3 "$NAS_IP" &>/dev/null; then
-    echo -e "${RED}Cannot reach $NAS_IP${NC}"
-    exit 1
-fi
-
-if ! ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
-    echo -e "${RED}Cannot connect via SSH to $SSH_TARGET${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}Connected${NC}"
-echo
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+resolve_machine "${1:-}"
+read_config
+check_connectivity
 
 # Banner
 cat << "EOF"
@@ -89,7 +20,7 @@ cat << "EOF"
 
 EOF
 
-echo -e "${YELLOW}This assistant will help you add a new disk to the NAS${NC}"
+echo -e "${YELLOW}This assistant will help you add a new disk to $MACHINE${NC}"
 echo
 separator
 echo
@@ -205,11 +136,11 @@ echo "  2. Format with ext4"
 echo "  3. Assign label: $disk_name"
 echo "  4. Create mount point: $mount_point"
 echo
+
 echo -e "${YELLOW}After this you will need to:${NC}"
-echo "  1. Update modules/storage-mergerfs.nix"
-echo "  2. Update modules/snapraid.nix"
-echo "  3. Run: ./scripts/update.sh"
-echo "  4. Run on NAS: sudo snapraid sync"
+echo "  1. Update machines/$MACHINE/config.nix (add \"$disk_name\" to dataDisks)"
+echo "  2. Update machines/$MACHINE/disko.nix (add the disk entry)"
+echo "  3. Run: ./scripts/update.sh $MACHINE"
 echo
 
 if ! confirm "Continue with partitioning and formatting?"; then
@@ -284,44 +215,12 @@ header "UPDATE CONFIGURATION"
 echo -e "${BOLD}Now you need to update the NixOS configuration:${NC}"
 echo
 
-# Generate snippet for storage-mergerfs.nix
-echo -e "${CYAN}1. Add this to modules/storage-mergerfs.nix:${NC}"
+echo -e "${CYAN}1. Add \"$disk_name\" to dataDisks in machines/$MACHINE/config.nix:${NC}"
 echo
-cat << EOF
-  # Disk $next_num - $size $model
-  fileSystems."/mnt/$disk_name" = {
-    device = "/dev/disk/by-label/$disk_name";
-    fsType = "ext4";
-    options = [
-      "defaults"
-      "noatime"
-      "nodiratime"
-      "user_xattr"
-      "barrier=1"
-    ];
-  };
-EOF
+echo "  dataDisks = [ ... \"$disk_name\" ];"
 echo
 
-echo -e "${CYAN}   And add to systemd.mounts dependencies:${NC}"
-echo "     - \"mnt-${disk_name}.mount\" in after and requires"
-echo
-
-separator
-echo
-
-# Generate snippet for snapraid.nix
-echo -e "${CYAN}2. Add this to /etc/snapraid.conf:${NC}"
-echo
-echo "  data $disk_name /mnt/$disk_name"
-echo "  content /mnt/$disk_name/snapraid.content"
-echo
-
-separator
-echo
-
-# Generate snippet for disko.nix
-echo -e "${CYAN}3. (Optional) Add this to modules/disko.nix for future installations:${NC}"
+echo -e "${CYAN}2. Add this to machines/$MACHINE/disko.nix:${NC}"
 echo
 cat << EOF
       data$next_num = {
@@ -336,14 +235,13 @@ cat << EOF
                 type = "filesystem";
                 format = "ext4";
                 mountpoint = "/mnt/$disk_name";
-                label = "$disk_name";
                 mountOptions = [
                   "defaults"
                   "noatime"
                   "nodiratime"
                   "user_xattr"
-                  "barrier=1"
                 ];
+                extraArgs = [ "-L" "$disk_name" ];
               };
             };
           };
@@ -361,25 +259,17 @@ echo
 
 header "NEXT STEPS"
 
-echo "1. Edit the local configuration:"
-echo "   vim modules/storage-mergerfs.nix"
-echo "   vim modules/snapraid.nix"
+echo "1. Edit the configuration:"
+echo "   vim machines/$MACHINE/config.nix"
+echo "   vim machines/$MACHINE/disko.nix"
 echo
 
 echo "2. Apply the changes:"
-echo "   ./scripts/update.sh"
+echo "   ./scripts/update.sh $MACHINE"
 echo
 
 echo "3. Verify that MergerFS detected it:"
 echo "   ssh $SSH_TARGET 'df -h /mnt/storage'"
-echo
-
-echo "4. Sync SnapRAID:"
-echo "   ssh $SSH_TARGET 'sudo snapraid sync'"
-echo
-
-echo "5. Verify the status:"
-echo "   ssh $SSH_TARGET 'sudo snapraid status'"
 echo
 
 separator

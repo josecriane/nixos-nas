@@ -1,0 +1,129 @@
+# Example disko configuration
+# Customize device paths for your hardware
+{ config, lib, ... }:
+
+{
+  disko.devices = {
+    disk = {
+      system = {
+        type = "disk";
+        device = "/dev/sda";  # System disk
+        content = {
+          type = "gpt";
+          partitions = {
+            ESP = {
+              size = "512M";
+              type = "EF00";
+              content = {
+                type = "filesystem";
+                format = "vfat";
+                mountpoint = "/boot";
+                mountOptions = [
+                  "defaults"
+                  "umask=0077"
+                ];
+              };
+            };
+
+            swap = {
+              size = "4G";
+              content = {
+                type = "swap";
+                randomEncryption = false;
+                resumeDevice = true;
+              };
+            };
+
+            root = {
+              size = "100%";
+              content = {
+                type = "filesystem";
+                format = "ext4";
+                mountpoint = "/";
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                ];
+              };
+            };
+          };
+        };
+      };
+
+      data1 = {
+        type = "disk";
+        device = "/dev/sdb";  # First data disk
+        content = {
+          type = "gpt";
+          partitions = {
+            disk1 = {
+              size = "100%";
+              content = {
+                type = "filesystem";
+                format = "ext4";
+                mountpoint = "/mnt/disk1";
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [ "-L" "disk1" ];
+              };
+            };
+          };
+        };
+      };
+
+      data2 = {
+        type = "disk";
+        device = "/dev/sdc";  # Second data disk
+        content = {
+          type = "gpt";
+          partitions = {
+            disk2 = {
+              size = "100%";
+              content = {
+                type = "filesystem";
+                format = "ext4";
+                mountpoint = "/mnt/disk2";
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [ "-L" "disk2" ];
+              };
+            };
+          };
+        };
+      };
+
+      data3 = {
+        type = "disk";
+        device = "/dev/sdd";  # Third data disk
+        content = {
+          type = "gpt";
+          partitions = {
+            disk3 = {
+              size = "100%";
+              content = {
+                type = "filesystem";
+                format = "ext4";
+                mountpoint = "/mnt/disk3";
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [ "-L" "disk3" ];
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}

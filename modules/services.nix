@@ -13,7 +13,7 @@ in
       global = {
         workgroup = "WORKGROUP";
         "server string" = "NixOS NAS";
-        "netbios name" = "nixos-nas";
+        "netbios name" = nasConfig.hostname;
         security = "user";
         "hosts allow" = "${networkPrefix} 127.0.0.1";
         "hosts deny" = "0.0.0.0/0";

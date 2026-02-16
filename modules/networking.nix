@@ -1,7 +1,15 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, nasConfig, ... }:
 
 {
-  networking.useDHCP = true;
+  # Static IP via systemd-networkd (works with any interface name)
+  networking.useDHCP = false;
+  systemd.network.enable = true;
+  systemd.network.networks."10-lan" = {
+    matchConfig.Type = "ether";
+    address = [ "${nasConfig.nasIP}/24" ];
+    routes = [{ Gateway = nasConfig.gateway; }];
+    networkConfig.DNS = nasConfig.nameservers;
+  };
 
   boot.kernel.sysctl = {
     "net.core.rmem_max" = 134217728;

@@ -16,5 +16,5 @@
   };
 
   security.sudo.wheelNeedsPassword = false;
-  users.users.root.hashedPassword = "!";
+  users.users.root.initialPassword = "nixos";
 }

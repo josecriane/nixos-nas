@@ -24,6 +24,9 @@
 
   timezone = "UTC";
 
+  # Data disks (names matching disko.nix partition labels)
+  dataDisks = [ "disk1" "disk2" "disk3" ];
+
   services = {
     samba = true;
     nfs = true;

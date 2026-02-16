@@ -1,3 +1,5 @@
+# Example hardware configuration
+# Customize for your CPU type (intel/amd) and kernel version
 { config, lib, pkgs, modulesPath, ... }:
 
 {
@@ -11,11 +13,11 @@
   };
 
   boot.kernelPackages = pkgs.linuxPackages_6_6;
-  boot.kernelModules = [ "kvm-intel" ];
+  boot.kernelModules = [ "kvm-intel" ];  # Change to kvm-amd for AMD
   boot.kernelParams = [ "vm.swappiness=10" ];
   boot.supportedFilesystems = [ "ext4" "vfat" ];
 
-  hardware.cpu.intel.updateMicrocode = true;
+  hardware.cpu.intel.updateMicrocode = true;  # Change to amd for AMD
 
   services.smartd = {
     enable = true;

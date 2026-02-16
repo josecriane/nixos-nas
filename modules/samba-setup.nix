@@ -1,10 +1,13 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{ config, lib, pkgs, nasConfig, machineName, secretsPath, ... }:
 
 with lib;
 
 let
-  sambaSecretPath = ../secrets/samba-password.age;
-  sambaSecretExists = builtins.pathExists sambaSecretPath;
+  sambaSecretPath =
+    if secretsPath != null
+    then secretsPath + "/${machineName}/samba-password.age"
+    else null;
+  sambaSecretExists = sambaSecretPath != null && builtins.pathExists sambaSecretPath;
 in
 {
   age.secrets = mkIf sambaSecretExists {

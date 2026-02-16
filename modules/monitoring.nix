@@ -1,5 +1,30 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, nasConfig, ... }:
 
+let
+  dataDisks = nasConfig.dataDisks;
+  diskMountChecks = builtins.concatStringsSep "\n" (
+    map (d: ''
+        if mountpoint -q "/mnt/${d}" 2>/dev/null; then
+          echo "OK: /mnt/${d} is mounted"
+        else
+          echo "WARNING: /mnt/${d} is NOT mounted!"
+        fi'') dataDisks
+  );
+  diskSpaceChecks = builtins.concatStringsSep "\n" (
+    map (d: ''
+        if mountpoint -q "/mnt/${d}" 2>/dev/null; then
+          USAGE=$(${pkgs.coreutils}/bin/df --output=pcent "/mnt/${d}" | tail -1 | tr -d ' %')
+          if [ "$USAGE" -gt "$THRESHOLD" ]; then
+            echo "WARNING: /mnt/${d} is at $USAGE% capacity (threshold: $THRESHOLD%)"
+          else
+            echo "OK: /mnt/${d} is at $USAGE% capacity"
+          fi
+        fi'') dataDisks
+  );
+  diskMountList = builtins.concatStringsSep " " (
+    map (d: "/mnt/${d}") dataDisks
+  );
+in
 {
   services.prometheus.exporters.node = {
     enable = false;
@@ -14,7 +39,7 @@
   };
 
   systemd.services.storage-health-check = {
-    description = "Storage Health Check (MergerFS + SnapRAID)";
+    description = "Storage Health Check (MergerFS)";
     serviceConfig = {
       Type = "oneshot";
       ExecStart = pkgs.writeScript "storage-health-check" ''
@@ -24,23 +49,16 @@
         echo ""
 
         echo "--- Disk Mounts ---"
-        for mount in /mnt/disk1 /mnt/disk2 /mnt/parity /mnt/storage; do
-          if mountpoint -q "$mount" 2>/dev/null; then
-            echo "OK: $mount is mounted"
-          else
-            echo "WARNING: $mount is NOT mounted!"
-          fi
-        done
+        ${diskMountChecks}
+        if mountpoint -q /mnt/storage 2>/dev/null; then
+          echo "OK: /mnt/storage is mounted"
+        else
+          echo "WARNING: /mnt/storage is NOT mounted!"
+        fi
         echo ""
 
         echo "--- Disk Space ---"
-        ${pkgs.coreutils}/bin/df -h /mnt/disk* /mnt/parity /mnt/storage 2>/dev/null
-        echo ""
-
-        echo "--- SnapRAID Status ---"
-        if command -v snapraid > /dev/null; then
-          ${pkgs.snapraid}/bin/snapraid status 2>/dev/null || echo "SnapRAID status unavailable"
-        fi
+        ${pkgs.coreutils}/bin/df -h ${diskMountList} /mnt/storage 2>/dev/null
         echo ""
 
         echo "--- SMART Health ---"
@@ -74,16 +92,7 @@
 
         echo "=== Disk Space Check ==="
 
-        for mount in /mnt/disk1 /mnt/disk2 /mnt/parity; do
-          if mountpoint -q "$mount" 2>/dev/null; then
-            USAGE=$(${pkgs.coreutils}/bin/df --output=pcent "$mount" | tail -1 | tr -d ' %')
-            if [ "$USAGE" -gt "$THRESHOLD" ]; then
-              echo "WARNING: $mount is at $USAGE% capacity (threshold: $THRESHOLD%)"
-            else
-              echo "OK: $mount is at $USAGE% capacity"
-            fi
-          fi
-        done
+        ${diskSpaceChecks}
 
         if mountpoint -q /mnt/storage 2>/dev/null; then
           POOL_USAGE=$(${pkgs.coreutils}/bin/df --output=pcent /mnt/storage | tail -1 | tr -d ' %')
@@ -143,12 +152,12 @@
 
       echo "================================"
       echo "NAS STATUS REPORT"
-      echo "MergerFS + SnapRAID"
+      echo "MergerFS"
       echo "================================"
       echo ""
 
       echo "--- Disk Mounts ---"
-      for mount in /mnt/disk1 /mnt/disk2 /mnt/parity /mnt/storage; do
+      for mount in ${diskMountList} /mnt/storage; do
         if mountpoint -q "$mount" 2>/dev/null; then
           echo "OK $mount mounted"
         else
@@ -158,15 +167,11 @@
       echo ""
 
       echo "--- Disk Usage ---"
-      ${coreutils}/bin/df -h /mnt/disk* /mnt/parity /mnt/storage 2>/dev/null
+      ${coreutils}/bin/df -h ${diskMountList} /mnt/storage 2>/dev/null
       echo ""
 
       echo "--- MergerFS Pool ---"
       ${coreutils}/bin/df -h /mnt/storage 2>/dev/null
-      echo ""
-
-      echo "--- SnapRAID Status ---"
-      ${snapraid}/bin/snapraid status 2>/dev/null || echo "Run 'sudo snapraid sync' first"
       echo ""
 
       echo "--- Memory Usage ---"

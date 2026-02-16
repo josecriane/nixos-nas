@@ -1,27 +1,29 @@
 { config, lib, pkgs, nasConfig, ... }:
 
+let
+  dataDisks = nasConfig.dataDisks;
+  user = nasConfig.adminUser;
+in
 {
   environment.systemPackages = with pkgs; [
     mergerfs
     mergerfs-tools
   ];
 
-  systemd.tmpfiles.rules = let
-    user = nasConfig.adminUser;
-  in [
-    "d /mnt/disk1 0755 ${user} ${user} -"
-    "d /mnt/disk2 0755 ${user} ${user} -"
-    "d /mnt/disk3 0755 ${user} ${user} -"
-    "d /mnt/storage 0755 ${user} ${user} -"
-    "d /mnt/storage/media 0775 ${user} ${user} -"
-    "d /mnt/storage/files 0775 ${user} ${user} -"
-    "d /mnt/storage/backups 0775 ${user} ${user} -"
-    "d /mnt/storage/downloads 0775 ${user} ${user} -"
-  ];
+  systemd.tmpfiles.rules =
+    (map (d: "d /mnt/${d} 0755 ${user} ${user} -") dataDisks)
+    ++ [
+      "d /mnt/storage 0755 ${user} ${user} -"
+      "d /mnt/storage/media 0775 ${user} ${user} -"
+      "d /mnt/storage/files 0775 ${user} ${user} -"
+      "d /mnt/storage/backups 0775 ${user} ${user} -"
+      "d /mnt/storage/downloads 0775 ${user} ${user} -"
+    ];
 
   fileSystems."/mnt/storage" = {
     device = "/mnt/disk*";
     fsType = "fuse.mergerfs";
+    depends = map (d: "/mnt/${d}") dataDisks;
     options = [
       "defaults"
       "allow_other"
@@ -35,26 +37,6 @@
       "fsname=mergerfs-storage"
     ];
   };
-
-  systemd.mounts = [
-    {
-      what = "/mnt/disk*";
-      where = "/mnt/storage";
-      type = "fuse.mergerfs";
-      options = "defaults,allow_other,use_ino,cache.files=auto-full,dropcacheonclose=true,category.create=epmfs,minfreespace=10G";
-      wantedBy = [ "multi-user.target" ];
-      after = [
-        "mnt-disk1.mount"
-        "mnt-disk2.mount"
-        "mnt-disk3.mount"
-      ];
-      requires = [
-        "mnt-disk1.mount"
-        "mnt-disk2.mount"
-        "mnt-disk3.mount"
-      ];
-    }
-  ];
 
   services.smartd = {
     enable = true;
@@ -84,7 +66,7 @@
       echo
 
       echo "=== SMART Status ==="
-      for disk in /dev/sd[a-d]; do
+      for disk in /dev/sd[a-z]; do
         if [ -e "$disk" ]; then
           echo
           echo "DISK: $disk"

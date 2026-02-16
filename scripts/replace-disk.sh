@@ -1,414 +1,285 @@
 #!/usr/bin/env bash
 #
-# Replace Disk - Replace a failed disk using SnapRAID (runs remotely via SSH)
+# Replace Disk - Migrate data from a failing disk, guide physical replacement,
+# and optionally restore data. Runs from local machine via SSH.
 #
 
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-CONFIG_FILE="$PROJECT_DIR/config.nix"
-
-separator() {
-    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
-}
-
-header() {
-    echo -e "\n${CYAN}${BOLD}=== $1 ===${NC}\n"
-}
-
-confirm() {
-    local prompt="$1"
-    local response
-    read -r -p "$(echo -e ${YELLOW}${prompt}${NC} [y/N]: )" response
-    [[ "${response,,}" == "y" ]]
-}
-
-# ============================================================================
-# CHECK LOCAL CONFIGURATION
-# ============================================================================
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo -e "${RED}Error: config.nix not found${NC}"
-    echo "Run first: ./scripts/setup.sh"
-    exit 1
-fi
-
-# Read connection details from config.nix
-NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-
-SSH_OPTS="-o StrictHostKeyChecking=no"
-SSH_TARGET="$ADMIN_USER@$NAS_IP"
-
-# Helper to run commands on the NAS
-nas() {
-    ssh $SSH_OPTS "$SSH_TARGET" "$@"
-}
-
-nas_sudo() {
-    ssh $SSH_OPTS "$SSH_TARGET" "sudo $*"
-}
-
-# ============================================================================
-# CONNECTIVITY CHECK
-# ============================================================================
-
-echo -e "${YELLOW}Connecting to NAS ($HOSTNAME at $NAS_IP)...${NC}"
-
-if ! ping -c 1 -W 3 "$NAS_IP" &>/dev/null; then
-    echo -e "${RED}Cannot reach $NAS_IP${NC}"
-    exit 1
-fi
-
-if ! ssh $SSH_OPTS -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
-    echo -e "${RED}Cannot connect via SSH to $SSH_TARGET${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}Connected${NC}"
-echo
-
-# Check snapraid on NAS
-if ! nas "command -v snapraid" &>/dev/null; then
-    echo -e "${RED}SnapRAID is not installed on the NAS${NC}"
-    exit 1
-fi
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+resolve_machine "${1:-}"
+read_config
+check_connectivity
 
 # Banner
 cat << "EOF"
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║              Replace Failed Disk                              ║
+║              Replace Disk - Data Migration                    ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 
 EOF
 
-echo -e "${YELLOW}This assistant will help you replace a failed disk${NC}"
-echo
-separator
-echo
-
 # ============================================================================
-# CURRENT STATUS
+# SHOW CURRENT DISK STATUS
 # ============================================================================
 
 header "CURRENT DISK STATUS"
 
-echo -e "${BOLD}Configured disks:${NC}"
+echo -e "${BOLD}MergerFS data disks:${NC}"
+echo
+nas "df -h /mnt/disk* 2>/dev/null" || echo "  No disks mounted"
 echo
 
-# Extract disks from snapraid.conf on NAS
-nas_disk_info=$(nas "
-if [ -f /etc/snapraid.conf ]; then
-    grep '^data' /etc/snapraid.conf | while IFS= read -r line; do
-        disk_name=\$(echo \"\$line\" | awk '{print \$2}')
-        disk_path=\$(echo \"\$line\" | awk '{print \$3}')
-        if mountpoint -q \"\$disk_path\" 2>/dev/null; then
-            size=\$(df -h \"\$disk_path\" | tail -1 | awk '{print \$2}')
-            used=\$(df -h \"\$disk_path\" | tail -1 | awk '{print \$3}')
-            echo \"MOUNTED:\$disk_name:\$disk_path:\$size:\$used\"
-        else
-            echo \"UNMOUNTED:\$disk_name:\$disk_path:N/A:N/A\"
+echo -e "${BOLD}SMART health:${NC}"
+echo
+nas '
+for disk in /dev/sd[a-z]; do
+    if [ -b "$disk" ]; then
+        info=$(sudo smartctl -i "$disk" 2>/dev/null)
+        model=$(echo "$info" | grep "Device Model" | cut -d: -f2 | xargs)
+        [ -z "$model" ] && continue
+
+        attrs=$(sudo smartctl -A "$disk" 2>/dev/null)
+        reallocated=$(echo "$attrs" | grep "Reallocated_Sector" | awk "{print \$10}")
+        hours=$(echo "$attrs" | grep "Power_On_Hours" | awk "{print \$10}" | grep -o "^[0-9]*")
+
+        status="OK"
+        if ! sudo smartctl -H "$disk" 2>/dev/null | grep -q "PASSED"; then
+            status="FAILED"
+        elif [ -n "$reallocated" ] && [ "$reallocated" -gt 0 ] 2>/dev/null; then
+            status="WARNING (${reallocated} reallocated sectors)"
         fi
-    done
-else
-    echo 'NO_CONF'
-fi
-")
 
-if [[ "$nas_disk_info" == "NO_CONF" ]]; then
-    echo -e "${RED}/etc/snapraid.conf not found on the NAS${NC}"
-    exit 1
-fi
+        mount_info=$(lsblk -n -o MOUNTPOINT "$disk"* 2>/dev/null | grep -v "^$" | head -1)
+        [ -z "$mount_info" ] && mount_info="not mounted"
 
-echo "$nas_disk_info" | while IFS=':' read -r status disk_name disk_path size used; do
-    if [[ "$status" == "MOUNTED" ]]; then
-        echo -e "  $disk_name ($disk_path): ${GREEN}mounted${NC}  Size: $size  Used: $used"
-    else
-        echo -e "  $disk_name ($disk_path): ${RED}NOT MOUNTED${NC}  Size: $size  Used: $used"
+        printf "  %-10s %-25s %-15s %s\n" "$disk" "$model" "$mount_info" "$status"
     fi
 done
-
-echo
-
-# Parity disk
-parity_info=$(nas "
-parity_path=\$(grep '^parity' /etc/snapraid.conf | awk '{print \$2}')
-if [ -n \"\$parity_path\" ] && [ -f \"\$parity_path\" ]; then
-    parity_size=\$(du -h \"\$parity_path\" | cut -f1)
-    echo \"OK:\$parity_path:\$parity_size\"
-else
-    echo \"FAIL:\$parity_path:\"
-fi
-")
-
-IFS=':' read -r parity_status parity_path parity_size <<< "$parity_info"
-if [[ "$parity_status" == "OK" ]]; then
-    echo -e "  Parity: ${GREEN}OK${NC} $parity_path ($parity_size)"
-else
-    echo -e "  Parity: ${RED}X Not found${NC}"
-fi
+'
 
 echo
 separator
 echo
 
 # ============================================================================
-# DISK SELECTION
+# SELECT SOURCE DISK (failing disk)
 # ============================================================================
 
-header "DISK SELECTION"
+header "SELECT FAILING DISK"
 
-echo "Which disk do you need to replace?"
+echo -e "${YELLOW}Which disk do you want to replace?${NC}"
+echo -e "Enter the mount name (e.g. disk1, disk2, disk3)"
+echo
+read -rp "$(echo -e "${CYAN}Disk to replace: ${NC}")" SOURCE_DISK
+
+# Validate
+if ! nas "test -d /mnt/$SOURCE_DISK"; then
+    echo -e "${RED}Error: /mnt/$SOURCE_DISK does not exist on the NAS${NC}"
+    exit 1
+fi
+
+if ! nas "mountpoint -q /mnt/$SOURCE_DISK"; then
+    echo -e "${RED}Error: /mnt/$SOURCE_DISK is not mounted${NC}"
+    exit 1
+fi
+
+# Show source disk usage
+echo
+echo -e "${BOLD}Data on /mnt/$SOURCE_DISK:${NC}"
+nas "du -sh /mnt/$SOURCE_DISK/ 2>/dev/null" || echo "  Could not read"
 echo
 
-# Get disk list from NAS
-mapfile -t disk_list < <(nas "grep '^data' /etc/snapraid.conf | awk '{print \$2\":\"\$3}'")
+separator
+echo
 
-i=1
-for entry in "${disk_list[@]}"; do
-    disk_name=$(echo "$entry" | cut -d':' -f1)
-    disk_path=$(echo "$entry" | cut -d':' -f2)
-    echo "  $i) $disk_name ($disk_path)"
-    ((i++))
+# ============================================================================
+# SELECT DESTINATION DISK
+# ============================================================================
+
+header "SELECT DESTINATION DISK"
+
+echo -e "${YELLOW}Where should the data be moved to?${NC}"
+echo
+echo -e "${BOLD}Available space on other disks:${NC}"
+echo
+
+nas '
+for d in /mnt/disk*; do
+    name=$(basename "$d")
+    [ "$name" = "'"$SOURCE_DISK"'" ] && continue
+    if mountpoint -q "$d" 2>/dev/null; then
+        avail=$(df -h "$d" | tail -1 | awk "{print \$4}")
+        used=$(df -h "$d" | tail -1 | awk "{print \$3}")
+        printf "  %-10s Available: %s  (Used: %s)\n" "$name" "$avail" "$used"
+    fi
 done
+'
 
 echo
-read -r -p "$(echo -e ${CYAN}Select the number of the disk to replace:${NC} )" selection
+read -rp "$(echo -e "${CYAN}Move data to: ${NC}")" DEST_DISK
 
-# Validate selection
-if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#disk_list[@]} ]; then
-    echo -e "${RED}Invalid selection${NC}"
+# Validate destination
+if [[ "$DEST_DISK" == "$SOURCE_DISK" ]]; then
+    echo -e "${RED}Source and destination cannot be the same${NC}"
     exit 1
 fi
 
-# Get selected disk
-selected="${disk_list[$((selection-1))]}"
-failed_disk_name=$(echo "$selected" | cut -d':' -f1)
-failed_disk_path=$(echo "$selected" | cut -d':' -f2)
-
-echo
-echo -e "${BOLD}Disk to replace:${NC} $failed_disk_name ($failed_disk_path)"
-echo
-
-separator
-echo
-
-# ============================================================================
-# CHECK REPLACEMENT DISK
-# ============================================================================
-
-header "REPLACEMENT DISK"
-
-echo -e "${BOLD}Available disks in the system:${NC}"
-echo
-
-nas "lsblk -d -o NAME,SIZE,TYPE,MODEL | grep -E 'disk|NAME'"
-
-echo
-read -r -p "$(echo -e ${CYAN}Enter the replacement device [e.g.: sdd]:${NC} )" new_device
-
-# Validate input
-if [[ ! "$new_device" =~ ^sd[a-z]$ ]] && [[ ! "$new_device" =~ ^nvme[0-9]n[0-9]$ ]]; then
-    echo -e "${RED}Invalid device${NC}"
+if ! nas "mountpoint -q /mnt/$DEST_DISK"; then
+    echo -e "${RED}Error: /mnt/$DEST_DISK is not mounted${NC}"
     exit 1
 fi
 
-# Add /dev/
-if [[ ! "$new_device" =~ ^/dev/ ]]; then
-    new_device="/dev/$new_device"
-fi
-
-# Check that it exists on the NAS
-if ! nas "test -b $new_device"; then
-    echo -e "${RED}Device $new_device does not exist on the NAS${NC}"
-    exit 1
-fi
-
-# New disk information
-model=$(nas "lsblk -d -n -o MODEL '$new_device' 2>/dev/null" || echo "Unknown")
-size=$(nas "lsblk -d -n -o SIZE '$new_device' 2>/dev/null" || echo "Unknown")
-
+# Check available space
 echo
-echo -e "${BOLD}Device:${NC} $new_device"
-echo -e "${BOLD}Model:${NC}  $model"
-echo -e "${BOLD}Size:${NC}   $size"
-echo
+echo -e "${YELLOW}Checking space...${NC}"
 
-# Check if it has data
-if nas "lsblk -n '$new_device' 2>/dev/null | grep -q part"; then
-    echo -e "${RED}${BOLD}WARNING: The disk has existing partitions${NC}"
-    nas "lsblk '$new_device'"
+SOURCE_USED=$(nas "du -sb /mnt/$SOURCE_DISK/ 2>/dev/null | awk '{print \$1}'" || echo "0")
+DEST_AVAIL=$(nas "df -B1 /mnt/$DEST_DISK | tail -1 | awk '{print \$4}'" || echo "0")
+
+SOURCE_HUMAN=$(nas "du -sh /mnt/$SOURCE_DISK/ 2>/dev/null | awk '{print \$1}'" || echo "?")
+DEST_HUMAN=$(nas "df -h /mnt/$DEST_DISK | tail -1 | awk '{print \$4}'" || echo "?")
+
+echo -e "  Data to move:      ${BOLD}$SOURCE_HUMAN${NC}"
+echo -e "  Space available:   ${BOLD}$DEST_HUMAN${NC}"
+
+if [[ "$SOURCE_USED" -gt "$DEST_AVAIL" ]]; then
     echo
+    echo -e "${RED}Not enough space on /mnt/$DEST_DISK${NC}"
+    echo -e "${YELLOW}Free space or distribute data manually across multiple disks.${NC}"
+    exit 1
 fi
+
+echo -e "  ${GREEN}Enough space${NC}"
+echo
 
 separator
 echo
 
 # ============================================================================
-# RECOVERY PLAN
+# MIGRATE DATA
 # ============================================================================
 
-header "RECOVERY PLAN"
+header "DATA MIGRATION"
 
-echo "The following steps will be performed:"
-echo
-echo "  1. Unmount failed disk (if mounted)"
-echo "  2. Partition and format new disk"
-echo "  3. Update disk label"
-echo "  4. Mount new disk at $failed_disk_path"
-echo "  5. Recover data using SnapRAID"
-echo "  6. Verify integrity of recovered data"
+echo -e "${YELLOW}This will copy all data from /mnt/$SOURCE_DISK to /mnt/$DEST_DISK${NC}"
+echo -e "${YELLOW}The original data will NOT be deleted yet.${NC}"
 echo
 
-echo -e "${RED}${BOLD}WARNING${NC}"
-echo -e "${RED}All data on $new_device will be DESTROYED${NC}"
-echo
-
-if ! confirm "Continue with replacement?"; then
-    echo "Operation cancelled"
+if ! confirm "Start migration?"; then
+    echo "Operation cancelled."
     exit 0
 fi
 
 echo
-
-# ============================================================================
-# EXECUTION
-# ============================================================================
-
-header "STEP 1: PREPARE NEW DISK"
-
-# Unmount failed disk if mounted
-if nas "mountpoint -q '$failed_disk_path' 2>/dev/null"; then
-    echo "Unmounting failed disk..."
-    nas_sudo "umount '$failed_disk_path'" || echo "Could not unmount (disk may be failed)"
-fi
-
-echo "Partitioning $new_device..."
-nas_sudo "parted -s '$new_device' mklabel gpt"
-nas_sudo "parted -s '$new_device' mkpart primary ext4 0% 100%"
-
-# Determine partition name
-if [[ "$new_device" =~ nvme ]]; then
-    partition="${new_device}p1"
-else
-    partition="${new_device}1"
-fi
-
-nas_sudo "sleep 2 && partprobe '$new_device' && sleep 1"
-
-echo "Formatting with ext4..."
-nas_sudo "mkfs.ext4 -F -L '$failed_disk_name' '$partition'"
-
-echo "Mounting new disk..."
-nas_sudo "mount '$partition' '$failed_disk_path'"
-
-echo "Setting permissions..."
-nas_sudo "chown $ADMIN_USER:$ADMIN_USER '$failed_disk_path'"
-nas_sudo "chmod 755 '$failed_disk_path'"
-
-echo -e "${GREEN}New disk prepared${NC}"
+echo -e "${BLUE}Migrating data with rsync...${NC}"
+echo -e "${BLUE}This may take a long time depending on the amount of data.${NC}"
 echo
 
-separator
-echo
-
-# ============================================================================
-# SNAPRAID RECOVERY
-# ============================================================================
-
-header "STEP 2: RECOVER DATA WITH SNAPRAID"
-
-echo -e "${YELLOW}Starting data recovery...${NC}"
-echo "This may take several hours depending on the amount of data"
-echo
-
-# Run snapraid fix for the entire disk
-if nas_sudo "snapraid fix -d '$failed_disk_name' -l /var/log/snapraid-fix.log"; then
-    echo
-    echo -e "${GREEN}Recovery completed successfully${NC}"
-    echo
-else
-    echo
-    echo -e "${RED}X Recovery failed or had errors${NC}"
-    echo "Check the log: ssh $SSH_TARGET 'cat /var/log/snapraid-fix.log'"
-    echo
+nas_sudo "rsync -avh --progress /mnt/$SOURCE_DISK/ /mnt/$DEST_DISK/" || {
+    echo -e "${RED}rsync failed. Check the NAS for errors.${NC}"
+    echo -e "${YELLOW}The source data has NOT been deleted.${NC}"
     exit 1
-fi
+}
 
-separator
+echo
+echo -e "${GREEN}Migration complete${NC}"
 echo
 
-# ============================================================================
-# VERIFICATION
-# ============================================================================
+# Verify
+header "VERIFICATION"
 
-header "STEP 3: VERIFICATION"
+echo -e "${BOLD}Source (/mnt/$SOURCE_DISK):${NC}"
+SOURCE_COUNT=$(nas "find /mnt/$SOURCE_DISK -type f 2>/dev/null | wc -l")
+echo "  Files: $SOURCE_COUNT"
+nas "du -sh /mnt/$SOURCE_DISK/ 2>/dev/null | awk '{print \"  Size:  \" \$1}'"
 
-echo "Verifying recovered data..."
+echo
+echo -e "${BOLD}Destination (/mnt/$DEST_DISK):${NC}"
+DEST_COUNT=$(nas "find /mnt/$DEST_DISK -type f 2>/dev/null | wc -l")
+echo "  Files: $DEST_COUNT"
+nas "du -sh /mnt/$DEST_DISK/ 2>/dev/null | awk '{print \"  Size:  \" \$1}'"
+
 echo
 
-# Run scrub on recovered disk
-if nas_sudo "snapraid scrub -p 100 -d '$failed_disk_name'"; then
-    echo
-    echo -e "${GREEN}Verification complete - Data is correct${NC}"
+if [[ "$SOURCE_COUNT" -le "$DEST_COUNT" ]]; then
+    echo -e "${GREEN}File count OK${NC}"
 else
-    echo
-    echo -e "${YELLOW}Warning: Verification found some issues${NC}"
-    echo "This may be normal if some files were modified during recovery"
+    echo -e "${RED}File count mismatch: source=$SOURCE_COUNT, dest=$DEST_COUNT${NC}"
+    echo -e "${YELLOW}Review before proceeding.${NC}"
 fi
 
 echo
+separator
+echo
 
-# Show final status
-nas "df -h '$failed_disk_path'"
+# ============================================================================
+# CLEAN SOURCE DISK
+# ============================================================================
+
+header "CLEAN SOURCE DISK"
+
+echo -e "${YELLOW}Data has been copied to /mnt/$DEST_DISK${NC}"
+echo
+
+if confirm "Delete all data from /mnt/$SOURCE_DISK?"; then
+    nas_sudo "rm -rf /mnt/$SOURCE_DISK/*"
+    echo -e "${GREEN}Source disk cleaned${NC}"
+else
+    echo -e "${YELLOW}Skipped. Clean manually later:${NC}"
+    echo "  ssh $SSH_TARGET 'sudo rm -rf /mnt/$SOURCE_DISK/*'"
+fi
 
 echo
 separator
 echo
 
 # ============================================================================
-# NEXT STEPS
+# PHYSICAL REPLACEMENT GUIDE
 # ============================================================================
 
-header "RECOVERY COMPLETE"
+header "PHYSICAL REPLACEMENT"
 
-echo -e "${GREEN}${BOLD}The disk has been replaced successfully${NC}"
+# Get by-id of the source disk
+OLD_BY_ID=$(nas '
+dev=$(df /mnt/'"$SOURCE_DISK"' 2>/dev/null | tail -1 | awk "{print \$1}" | sed "s/[0-9]*$//" | sed "s/p$//" )
+if [ -n "$dev" ]; then
+    ls -la /dev/disk/by-id/ 2>/dev/null | grep "$(basename "$dev")$" | awk "{print \$9}" | grep "^ata-" | head -1
+fi
+' || echo "unknown")
+
+echo -e "${BOLD}Current disk identifier:${NC} /dev/disk/by-id/$OLD_BY_ID"
 echo
-
-echo "Recommended next steps:"
+echo -e "${BOLD}Steps:${NC}"
 echo
-
-echo "1. Verify that all files are accessible:"
-echo "   ssh $SSH_TARGET 'ls -lah $failed_disk_path'"
+echo "  1. Power off the NAS:"
+echo "     ssh $SSH_TARGET 'sudo poweroff'"
 echo
-
-echo "2. Run a full sync to update parity:"
-echo "   ssh $SSH_TARGET 'sudo snapraid sync'"
+echo "  2. Physically swap the disk"
 echo
-
-echo "3. Monitor the new disk over the next few weeks:"
-echo "   ssh $SSH_TARGET 'sudo smartctl -a $new_device'"
+echo "  3. Boot the NAS and find the new disk's ID:"
+echo "     ssh $SSH_TARGET 'ls -la /dev/disk/by-id/ | grep -v part | grep ata-'"
 echo
-
-echo "4. Run scrub periodically to verify integrity:"
-echo "   ssh $SSH_TARGET 'sudo snapraid scrub -p 10'"
+echo "  4. Update machines/$MACHINE/disko.nix:"
+echo "     Replace the device path for $SOURCE_DISK with the new by-id"
+echo
+echo "  5. Format the new disk:"
+echo "     ssh $SSH_TARGET 'sudo parted -s /dev/disk/by-id/NEW_ID mklabel gpt'"
+echo "     ssh $SSH_TARGET 'sudo parted -s /dev/disk/by-id/NEW_ID mkpart primary ext4 0% 100%'"
+echo "     ssh $SSH_TARGET 'sudo mkfs.ext4 -L $SOURCE_DISK /dev/disk/by-id/NEW_ID-part1'"
+echo
+echo "  6. Apply NixOS config:"
+echo "     ./scripts/update.sh $MACHINE"
+echo
+echo "  7. (Optional) Move data back:"
+echo "     ssh $SSH_TARGET 'sudo rsync -avh /mnt/$DEST_DISK/FOLDER/ /mnt/$SOURCE_DISK/FOLDER/'"
 echo
 
 separator
 echo
 
-echo "Recovery log: ssh $SSH_TARGET 'cat /var/log/snapraid-fix.log'"
+echo -e "${GREEN}${BOLD}Data migration complete${NC}"
+echo -e "${YELLOW}Follow the steps above to finish the physical replacement.${NC}"
 echo

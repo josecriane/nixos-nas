@@ -1,54 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-CONFIG_FILE="$PROJECT_DIR/config.nix"
-SECRETS_DIR="$PROJECT_DIR/secrets"
-NAS_KEY_DIR="$SECRETS_DIR/nas-keys"
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+resolve_machine "${1:-}"
 
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║         NixOS NAS - Installation                             ║${NC}"
+echo -e "${BLUE}║         NixOS NAS - Installation ($MACHINE)                  ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Check that config.nix exists
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo -e "${RED}Error: config.nix not found${NC}"
-    echo "Run first: ./scripts/setup.sh"
-    exit 1
-fi
-
-# Check that NAS keys exist
-if [[ ! -f "$NAS_KEY_DIR/ssh_host_ed25519_key" ]]; then
-    echo -e "${RED}Error: NAS SSH keys not found${NC}"
-    echo "Run first: ./scripts/setup.sh"
+# Check that machine keys exist
+if [[ ! -f "$KEY_DIR/ssh_host_ed25519_key" ]]; then
+    echo -e "${RED}Error: NAS SSH keys not found at $KEY_DIR${NC}"
+    echo "Run first: ./scripts/setup.sh $MACHINE"
     exit 1
 fi
 
 # Check that Samba secret exists
-if [[ ! -f "$SECRETS_DIR/samba-password.age" ]]; then
+if [[ ! -f "$SECRETS_DIR/$MACHINE/samba-password.age" ]]; then
     echo -e "${RED}Error: Samba secret not found${NC}"
-    echo "Run first: ./scripts/setup.sh"
+    echo "Run first: ./scripts/setup.sh $MACHINE"
     exit 1
 fi
 
 # Read configuration
-NAS_IP=$(grep 'nasIP' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-ADMIN_USER=$(grep 'adminUser' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
-HOSTNAME=$(grep 'hostname' "$CONFIG_FILE" | sed 's/.*"\(.*\)".*/\1/')
+read_config
 
-echo -e "${GREEN}NAS:${NC} $HOSTNAME"
-echo -e "${GREEN}IP:${NC}  $NAS_IP"
-echo -e "${GREEN}User:${NC} $ADMIN_USER"
+echo -e "${GREEN}Machine:${NC} $MACHINE"
+echo -e "${GREEN}NAS:${NC}     $HOSTNAME"
+echo -e "${GREEN}IP:${NC}      $NAS_IP"
+echo -e "${GREEN}User:${NC}    $ADMIN_USER"
 echo ""
 
 # Check connectivity
@@ -71,19 +52,18 @@ ssh-keygen -R "$NAS_IP" &>/dev/null || true
 echo -e "${YELLOW}Detecting SSH user...${NC}"
 
 SSH_USER=""
-SSH_OPTS="-o ConnectTimeout=10 -o StrictHostKeyChecking=no"
 
 # Try with admin user (NixOS already installed)
-if ssh $SSH_OPTS -o BatchMode=yes "$ADMIN_USER@$NAS_IP" "echo ok" &>/dev/null; then
+if ssh $SSH_OPTS -o ConnectTimeout=10 -o BatchMode=yes "$ADMIN_USER@$NAS_IP" "echo ok" &>/dev/null; then
     SSH_USER="$ADMIN_USER"
     echo -e "${GREEN}Connecting as $SSH_USER (existing NixOS)${NC}"
 # Try with nixos + password
-elif command -v sshpass &>/dev/null && sshpass -p nixos ssh $SSH_OPTS -o PubkeyAuthentication=no "nixos@$NAS_IP" "echo ok" &>/dev/null; then
+elif command -v sshpass &>/dev/null && sshpass -p nixos ssh $SSH_OPTS -o ConnectTimeout=10 -o PubkeyAuthentication=no "nixos@$NAS_IP" "echo ok" &>/dev/null; then
     SSH_USER="nixos"
     USE_SSHPASS="true"
     echo -e "${GREEN}Connecting as nixos (installation ISO)${NC}"
 # Try with nixos + SSH key
-elif ssh $SSH_OPTS -o BatchMode=yes "nixos@$NAS_IP" "echo ok" &>/dev/null; then
+elif ssh $SSH_OPTS -o ConnectTimeout=10 -o BatchMode=yes "nixos@$NAS_IP" "echo ok" &>/dev/null; then
     SSH_USER="nixos"
     echo -e "${GREEN}Connecting as nixos (SSH key)${NC}"
 else
@@ -125,8 +105,8 @@ echo -e "${RED}╔════════════════════�
 echo -e "${RED}║  WARNING: This will ERASE ALL content on the disks           ║${NC}"
 echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-read -rp "$(echo -e "${YELLOW}Continue with installation? [y/N]:${NC} ")" confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+read -rp "$(echo -e "${YELLOW}Continue with installation? [y/N]:${NC} ")" confirm_install
+if [[ ! "$confirm_install" =~ ^[Yy]$ ]]; then
     echo "Installation cancelled."
     exit 0
 fi
@@ -136,8 +116,8 @@ echo -e "\n${BLUE}=== Preparing Installation ===${NC}\n"
 
 EXTRA_FILES=$(mktemp -d)
 mkdir -p "$EXTRA_FILES/etc/ssh"
-cp "$NAS_KEY_DIR/ssh_host_ed25519_key" "$EXTRA_FILES/etc/ssh/"
-cp "$NAS_KEY_DIR/ssh_host_ed25519_key.pub" "$EXTRA_FILES/etc/ssh/"
+cp "$KEY_DIR/ssh_host_ed25519_key" "$EXTRA_FILES/etc/ssh/"
+cp "$KEY_DIR/ssh_host_ed25519_key.pub" "$EXTRA_FILES/etc/ssh/"
 chmod 600 "$EXTRA_FILES/etc/ssh/ssh_host_ed25519_key"
 
 echo -e "${GREEN}SSH keys prepared${NC}"
@@ -149,13 +129,13 @@ cd "$PROJECT_DIR"
 
 if [[ "${USE_SSHPASS:-}" == "true" ]]; then
     SSHPASS=nixos nix run github:nix-community/nixos-anywhere -- \
-        --flake .#nas \
+        --flake ".#$MACHINE" \
         --target-host "$SSH_USER@$NAS_IP" \
         --extra-files "$EXTRA_FILES" \
         --env-password
 else
     nix run github:nix-community/nixos-anywhere -- \
-        --flake .#nas \
+        --flake ".#$MACHINE" \
         --target-host "$SSH_USER@$NAS_IP" \
         --extra-files "$EXTRA_FILES"
 fi
@@ -221,6 +201,4 @@ echo -e "    mount -t nfs $NAS_IP:/mnt/storage /mnt/nas"
 echo ""
 echo -e "  ${GREEN}Useful commands:${NC}"
 echo -e "    nas-status           # View NAS status"
-echo -e "    sudo snapraid status # View SnapRAID status"
-echo -e "    sudo snapraid sync   # Sync parity"
 echo ""

@@ -349,7 +349,7 @@ nix flake check || {
 # Build
 echo ""
 echo "3. Building configuration..."
-sudo nixos-rebuild build --flake .#nas || {
+sudo nixos-rebuild build --flake '.#<machine-name>' || {
     echo "Error: Build failed"
     exit 1
 }
@@ -360,7 +360,7 @@ echo "4. Applying configuration..."
 read -p "Apply changes to system? [y/N]: " apply
 
 if [[ "$apply" =~ ^[Yy]$ ]]; then
-    sudo nixos-rebuild switch --flake .#nas
+    sudo nixos-rebuild switch --flake '.#<machine-name>'
     echo ""
     echo "Configuration applied successfully"
     echo ""
@@ -370,7 +370,7 @@ if [[ "$apply" =~ ^[Yy]$ ]]; then
     echo "  systemctl status nginx.service"
 else
     echo "Changes not applied. To apply manually:"
-    echo "  sudo nixos-rebuild switch --flake .#nas"
+    echo "  sudo nixos-rebuild switch --flake '.#<machine-name>'"
 fi
 SCRIPT_EOF
 
@@ -455,7 +455,7 @@ echo "   cat $HOSTS_FILE"
 echo ""
 echo "4. Apply the configuration:"
 echo "   cd /path/to/nixos-nas"
-echo "   sudo nixos-rebuild switch --flake .#nas"
+echo "   sudo nixos-rebuild switch --flake '.#<machine-name>'"
 echo ""
 echo "5. Verify the services:"
 echo "   $VERIFY_SCRIPT"
