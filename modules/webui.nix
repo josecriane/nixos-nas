@@ -1,16 +1,25 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 with lib;
 
 let
   cfg = config.nas.webui;
   adminUser = nasConfig.adminUser;
-in {
+in
+{
   options.nas.webui = {
     enable = mkEnableOption "Web UI services (Cockpit and File Browser)";
 
     cockpit = {
-      enable = mkEnableOption "Cockpit web interface" // { default = true; };
+      enable = mkEnableOption "Cockpit web interface" // {
+        default = true;
+      };
       port = mkOption {
         type = types.port;
         default = 9090;
@@ -23,13 +32,18 @@ in {
       };
       origins = mkOption {
         type = types.listOf types.str;
-        default = [ "https://nas.local" "http://localhost:9090" ];
+        default = [
+          "https://nas.local"
+          "http://localhost:9090"
+        ];
         description = "Allowed origins for Cockpit (for reverse proxy/Authentik)";
       };
     };
 
     filebrowser = {
-      enable = mkEnableOption "File Browser web interface" // { default = true; };
+      enable = mkEnableOption "File Browser web interface" // {
+        default = true;
+      };
       port = mkOption {
         type = types.port;
         default = 8080;
@@ -90,10 +104,10 @@ in {
           "log": "stdout",
           "baseURL": "",
           ${optionalString cfg.filebrowser.proxyAuth ''
-          "auth": {
-            "method": "proxy",
-            "header": "${cfg.filebrowser.proxyHeader}"
-          },
+            "auth": {
+              "method": "proxy",
+              "header": "${cfg.filebrowser.proxyHeader}"
+            },
           ''}
           "commands": [],
           "shell": []
@@ -130,16 +144,17 @@ in {
       "d /var/lib/filebrowser 0755 ${adminUser} ${adminUser} -"
     ];
 
-    environment.systemPackages = with pkgs;
+    environment.systemPackages =
+      with pkgs;
       (optionals cfg.cockpit.enable [
         cockpit
         cockpit-machines
         cockpit-podman
-      ]) ++
-      (optional cfg.filebrowser.enable filebrowser);
+      ])
+      ++ (optional cfg.filebrowser.enable filebrowser);
 
     networking.firewall.allowedTCPPorts =
-      (optional cfg.cockpit.enable cfg.cockpit.port) ++
-      (optional cfg.filebrowser.enable cfg.filebrowser.port);
+      (optional cfg.cockpit.enable cfg.cockpit.port)
+      ++ (optional cfg.filebrowser.enable cfg.filebrowser.port);
   };
 }

@@ -8,7 +8,10 @@
   # Network
   nasIP = "192.168.0.10";
   gateway = "192.168.0.1";
-  nameservers = [ "192.168.0.11" "1.1.1.1" ];
+  nameservers = [
+    "192.168.0.11"
+    "1.1.1.1"
+  ];
 
   # Domain (for server integration)
   domain = "josecriane.com";
@@ -28,7 +31,11 @@
   timezone = "UTC";
 
   # Data disks (used by storage-mergerfs.nix and monitoring.nix)
-  dataDisks = [ "disk1" "disk2" "disk3" ];
+  dataDisks = [
+    "disk1"
+    "disk2"
+    "disk3"
+  ];
 
   # Services
   services = {
@@ -37,12 +44,5 @@
     cockpit = true;
     filebrowser = true;
     authentikIntegration = true;
-  };
-
-  # LDAP (for Samba with Authentik)
-  ldap = {
-    enable = false;
-    server = "";
-    baseDN = "dc=nas,dc=local";
   };
 }

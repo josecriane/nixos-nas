@@ -1,4 +1,10 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 {
   # Static IP via systemd-networkd (works with any interface name)
@@ -7,7 +13,7 @@
   systemd.network.networks."10-lan" = {
     matchConfig.Type = "ether";
     address = [ "${nasConfig.nasIP}/24" ];
-    routes = [{ Gateway = nasConfig.gateway; }];
+    routes = [ { Gateway = nasConfig.gateway; } ];
     networkConfig.DNS = nasConfig.nameservers;
   };
 

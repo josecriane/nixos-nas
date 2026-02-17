@@ -23,7 +23,6 @@ toggle_bool() {
 SVC_COCKPIT=$(grep -A5 'services = {' "$CONFIG_FILE" | grep 'cockpit' | grep -o 'true\|false')
 SVC_FILEBROWSER=$(grep -A5 'services = {' "$CONFIG_FILE" | grep 'filebrowser' | grep -o 'true\|false')
 SVC_AUTHENTIK=$(grep -A5 'services = {' "$CONFIG_FILE" | grep 'authentikIntegration' | grep -o 'true\|false' || echo "false")
-LDAP_ENABLED=$(grep -A5 'ldap = {' "$CONFIG_FILE" | grep 'enable' | grep -o 'true\|false' || echo "false")
 
 echo -e "${GREEN}Machine:${NC} $MACHINE"
 echo -e "${GREEN}NAS:${NC}     $HOSTNAME ($NAS_IP)"
@@ -36,14 +35,13 @@ echo ""
 echo -e "  1. Cockpit:              ${CYAN}$SVC_COCKPIT${NC}"
 echo -e "  2. File Browser:         ${CYAN}$SVC_FILEBROWSER${NC}"
 echo -e "  3. Authentik SSO:        ${CYAN}$SVC_AUTHENTIK${NC}"
-echo -e "  4. LDAP for Samba:       ${CYAN}$LDAP_ENABLED${NC}"
 echo ""
 
 # Ask if they want to change anything
 if confirm "Do you want to change any configuration?"; then
     echo ""
     echo -e "${YELLOW}Enter the numbers of options to change (separated by space)${NC}"
-    echo -e "${YELLOW}Example: 3 4 (to change Authentik and LDAP)${NC}"
+    echo -e "${YELLOW}Example: 1 3 (to change Cockpit and Authentik)${NC}"
     echo -e "${YELLOW}Enter to change nothing${NC}"
     read -rp "> " OPTIONS
 
@@ -66,11 +64,6 @@ if confirm "Do you want to change any configuration?"; then
                 echo -e "  Authentik SSO: ${GREEN}$SVC_AUTHENTIK${NC}"
                 CHANGED=true
                 ;;
-            4)
-                LDAP_ENABLED=$(toggle_bool "$LDAP_ENABLED")
-                echo -e "  LDAP for Samba: ${GREEN}$LDAP_ENABLED${NC}"
-                CHANGED=true
-                ;;
         esac
     done
 
@@ -82,9 +75,6 @@ if confirm "Do you want to change any configuration?"; then
         sed -i "s/cockpit = \(true\|false\);/cockpit = $SVC_COCKPIT;/" "$CONFIG_FILE"
         sed -i "s/filebrowser = \(true\|false\);/filebrowser = $SVC_FILEBROWSER;/" "$CONFIG_FILE"
         sed -i "s/authentikIntegration = \(true\|false\);/authentikIntegration = $SVC_AUTHENTIK;/" "$CONFIG_FILE"
-
-        # Update LDAP
-        sed -i "/ldap = {/,/};/s/enable = \(true\|false\);/enable = $LDAP_ENABLED;/" "$CONFIG_FILE"
 
         echo -e "${GREEN}config.nix updated${NC}"
     fi

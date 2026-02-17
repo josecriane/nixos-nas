@@ -137,8 +137,7 @@ nixos-nas/
 │   ├── users.nix          # User management
 │   ├── monitoring.nix     # Health checks and alerts
 │   ├── reverse-proxy.nix  # Optional Nginx reverse proxy
-│   ├── samba-setup.nix    # Samba password from agenix
-│   └── samba-ldap.nix     # Optional LDAP integration
+│   └── samba-setup.nix    # Samba password from agenix
 ├── scripts/
 │   ├── setup.sh           # Interactive configuration wizard
 │   ├── install.sh         # Installation via nixos-anywhere

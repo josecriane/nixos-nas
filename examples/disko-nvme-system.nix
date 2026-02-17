@@ -29,7 +29,10 @@
                 type = "filesystem";
                 format = "vfat";
                 mountpoint = "/boot";
-                mountOptions = [ "defaults" "umask=0077" ];
+                mountOptions = [
+                  "defaults"
+                  "umask=0077"
+                ];
               };
             };
             swap = {
@@ -46,7 +49,10 @@
                 type = "filesystem";
                 format = "ext4";
                 mountpoint = "/";
-                mountOptions = [ "defaults" "noatime" ];
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                ];
               };
             };
           };
@@ -65,8 +71,15 @@
                 type = "filesystem";
                 format = "ext4";
                 mountpoint = "/mnt/parity";
-                mountOptions = [ "defaults" "noatime" "nodiratime" ];
-                extraArgs = [ "-L" "parity" ];
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                ];
+                extraArgs = [
+                  "-L"
+                  "parity"
+                ];
               };
             };
           };
@@ -85,8 +98,16 @@
                 type = "filesystem";
                 format = "ext4";
                 mountpoint = "/mnt/disk1";
-                mountOptions = [ "defaults" "noatime" "nodiratime" "user_xattr" ];
-                extraArgs = [ "-L" "disk1" ];
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [
+                  "-L"
+                  "disk1"
+                ];
               };
             };
           };
@@ -105,8 +126,16 @@
                 type = "filesystem";
                 format = "ext4";
                 mountpoint = "/mnt/disk2";
-                mountOptions = [ "defaults" "noatime" "nodiratime" "user_xattr" ];
-                extraArgs = [ "-L" "disk2" ];
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [
+                  "-L"
+                  "disk2"
+                ];
               };
             };
           };
@@ -125,8 +154,16 @@
                 type = "filesystem";
                 format = "ext4";
                 mountpoint = "/mnt/disk3";
-                mountOptions = [ "defaults" "noatime" "nodiratime" "user_xattr" ];
-                extraArgs = [ "-L" "disk3" ];
+                mountOptions = [
+                  "defaults"
+                  "noatime"
+                  "nodiratime"
+                  "user_xattr"
+                ];
+                extraArgs = [
+                  "-L"
+                  "disk3"
+                ];
               };
             };
           };

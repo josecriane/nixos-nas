@@ -266,8 +266,6 @@ if ! confirm "  File Browser (web file manager)?"; then SVC_FILEBROWSER="false";
 
 # Authentik integration
 SVC_AUTHENTIK="false"
-LDAP_SERVER=""
-LDAP_ENABLED="false"
 
 echo ""
 if confirm "  Integrate with Authentik SSO?"; then
@@ -275,14 +273,6 @@ if confirm "  Integrate with Authentik SSO?"; then
     echo ""
     echo -e "${CYAN}Authentik SSO enabled.${NC}"
     echo "  - Cockpit and File Browser will use ForwardAuth"
-    echo ""
-
-    if confirm "  Use Authentik LDAP for Samba? (experimental)"; then
-        LDAP_ENABLED="true"
-        ask "LDAP server IP (Authentik)" "" LDAP_SERVER
-        echo ""
-        echo -e "${YELLOW}NOTE: Users must exist in Authentik to access Samba.${NC}"
-    fi
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -366,13 +356,6 @@ cat > "$MACHINE_DIR/config.nix" << EOF
     cockpit = $SVC_COCKPIT;
     filebrowser = $SVC_FILEBROWSER;
     authentikIntegration = $SVC_AUTHENTIK;
-  };
-
-  # LDAP (for Samba with Authentik)
-  ldap = {
-    enable = $LDAP_ENABLED;
-    server = "$LDAP_SERVER";
-    baseDN = "dc=nas,dc=local";
   };
 }
 EOF

@@ -7,5 +7,8 @@ let
 in
 {
   # Per-machine secrets
-  "nas1/samba-password.age".publicKeys = [ nas1 admin ];
+  "nas1/samba-password.age".publicKeys = [
+    nas1
+    admin
+  ];
 }

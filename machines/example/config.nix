@@ -7,7 +7,10 @@
 
   gateway = "192.168.1.1";
 
-  nameservers = [ "192.168.1.1" "1.1.1.1" ];
+  nameservers = [
+    "192.168.1.1"
+    "1.1.1.1"
+  ];
 
   domain = "example.com";
 
@@ -25,7 +28,11 @@
   timezone = "UTC";
 
   # Data disks (names matching disko.nix partition labels)
-  dataDisks = [ "disk1" "disk2" "disk3" ];
+  dataDisks = [
+    "disk1"
+    "disk2"
+    "disk3"
+  ];
 
   services = {
     samba = true;
@@ -35,11 +42,5 @@
     filebrowser = true;
 
     authentikIntegration = false;
-  };
-
-  ldap = {
-    enable = false;
-    server = "";
-    baseDN = "dc=nas,dc=local";
   };
 }

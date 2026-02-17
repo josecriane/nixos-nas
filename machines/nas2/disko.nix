@@ -57,7 +57,10 @@
                   "nodiratime"
                   "user_xattr"
                 ];
-                extraArgs = [ "-L" "disk1" ];
+                extraArgs = [
+                  "-L"
+                  "disk1"
+                ];
               };
             };
           };
@@ -82,7 +85,10 @@
                   "nodiratime"
                   "user_xattr"
                 ];
-                extraArgs = [ "-L" "disk2" ];
+                extraArgs = [
+                  "-L"
+                  "disk2"
+                ];
               };
             };
           };
@@ -107,7 +113,10 @@
                   "nodiratime"
                   "user_xattr"
                 ];
-                extraArgs = [ "-L" "disk3" ];
+                extraArgs = [
+                  "-L"
+                  "disk3"
+                ];
               };
             };
           };

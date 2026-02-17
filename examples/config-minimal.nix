@@ -6,7 +6,10 @@
 
   nasIP = "192.168.1.100";
   gateway = "192.168.1.1";
-  nameservers = [ "1.1.1.1" "8.8.8.8" ];
+  nameservers = [
+    "1.1.1.1"
+    "8.8.8.8"
+  ];
 
   domain = "local";
   subdomain = "";
@@ -27,11 +30,5 @@
     cockpit = false;
     filebrowser = false;
     authentikIntegration = false;
-  };
-
-  ldap = {
-    enable = false;
-    server = "";
-    baseDN = "";
   };
 }

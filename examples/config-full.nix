@@ -6,7 +6,10 @@
 
   nasIP = "192.168.1.100";
   gateway = "192.168.1.1";
-  nameservers = [ "192.168.1.1" "1.1.1.1" ];
+  nameservers = [
+    "192.168.1.1"
+    "1.1.1.1"
+  ];
 
   domain = "example.com";
   subdomain = "home";
@@ -28,11 +31,5 @@
     cockpit = true;
     filebrowser = true;
     authentikIntegration = true;
-  };
-
-  ldap = {
-    enable = true;
-    server = "ldap://authentik.example.com";
-    baseDN = "dc=example,dc=com";
   };
 }

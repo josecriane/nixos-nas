@@ -1,29 +1,33 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 let
   dataDisks = nasConfig.dataDisks;
   diskMountChecks = builtins.concatStringsSep "\n" (
     map (d: ''
-        if mountpoint -q "/mnt/${d}" 2>/dev/null; then
-          echo "OK: /mnt/${d} is mounted"
-        else
-          echo "WARNING: /mnt/${d} is NOT mounted!"
-        fi'') dataDisks
+      if mountpoint -q "/mnt/${d}" 2>/dev/null; then
+        echo "OK: /mnt/${d} is mounted"
+      else
+        echo "WARNING: /mnt/${d} is NOT mounted!"
+      fi'') dataDisks
   );
   diskSpaceChecks = builtins.concatStringsSep "\n" (
     map (d: ''
-        if mountpoint -q "/mnt/${d}" 2>/dev/null; then
-          USAGE=$(${pkgs.coreutils}/bin/df --output=pcent "/mnt/${d}" | tail -1 | tr -d ' %')
-          if [ "$USAGE" -gt "$THRESHOLD" ]; then
-            echo "WARNING: /mnt/${d} is at $USAGE% capacity (threshold: $THRESHOLD%)"
-          else
-            echo "OK: /mnt/${d} is at $USAGE% capacity"
-          fi
-        fi'') dataDisks
+      if mountpoint -q "/mnt/${d}" 2>/dev/null; then
+        USAGE=$(${pkgs.coreutils}/bin/df --output=pcent "/mnt/${d}" | tail -1 | tr -d ' %')
+        if [ "$USAGE" -gt "$THRESHOLD" ]; then
+          echo "WARNING: /mnt/${d} is at $USAGE% capacity (threshold: $THRESHOLD%)"
+        else
+          echo "OK: /mnt/${d} is at $USAGE% capacity"
+        fi
+      fi'') dataDisks
   );
-  diskMountList = builtins.concatStringsSep " " (
-    map (d: "/mnt/${d}") dataDisks
-  );
+  diskMountList = builtins.concatStringsSep " " (map (d: "/mnt/${d}") dataDisks);
 in
 {
   services.prometheus.exporters.node = {

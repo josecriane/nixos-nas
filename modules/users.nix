@@ -1,4 +1,10 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 {
   users.users.${nasConfig.adminUser} = {
@@ -6,7 +12,10 @@
     description = "NAS Administrator";
     uid = nasConfig.puid;
     group = nasConfig.adminUser;
-    extraGroups = [ "wheel" "users" ];
+    extraGroups = [
+      "wheel"
+      "users"
+    ];
     openssh.authorizedKeys.keys = nasConfig.adminSSHKeys;
     shell = pkgs.bash;
   };
@@ -16,5 +25,5 @@
   };
 
   security.sudo.wheelNeedsPassword = false;
-  users.users.root.initialPassword = "nixos";
+  users.users.root.hashedPassword = "!";
 }

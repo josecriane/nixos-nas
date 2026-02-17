@@ -1,8 +1,15 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 let
   adminUser = nasConfig.adminUser;
-  networkPrefix = builtins.head (builtins.match "([0-9]+\\.[0-9]+\\.[0-9]+)\\.[0-9]+" nasConfig.gateway) + ".";
+  networkPrefix =
+    builtins.head (builtins.match "([0-9]+\\.[0-9]+\\.[0-9]+)\\.[0-9]+" nasConfig.gateway) + ".";
   networkCIDR = networkPrefix + "0/24";
 in
 {
@@ -106,8 +113,14 @@ in
     '';
   };
 
-  networking.firewall.allowedTCPPorts = [ 2049 111 ];
-  networking.firewall.allowedUDPPorts = [ 2049 111 ];
+  networking.firewall.allowedTCPPorts = [
+    2049
+    111
+  ];
+  networking.firewall.allowedUDPPorts = [
+    2049
+    111
+  ];
 
   services.avahi = {
     enable = true;

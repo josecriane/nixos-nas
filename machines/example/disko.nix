@@ -7,7 +7,7 @@
     disk = {
       system = {
         type = "disk";
-        device = "/dev/sda";  # System disk
+        device = "/dev/sda"; # System disk
         content = {
           type = "gpt";
           partitions = {
@@ -52,7 +52,7 @@
 
       data1 = {
         type = "disk";
-        device = "/dev/sdb";  # First data disk
+        device = "/dev/sdb"; # First data disk
         content = {
           type = "gpt";
           partitions = {
@@ -68,7 +68,10 @@
                   "nodiratime"
                   "user_xattr"
                 ];
-                extraArgs = [ "-L" "disk1" ];
+                extraArgs = [
+                  "-L"
+                  "disk1"
+                ];
               };
             };
           };
@@ -77,7 +80,7 @@
 
       data2 = {
         type = "disk";
-        device = "/dev/sdc";  # Second data disk
+        device = "/dev/sdc"; # Second data disk
         content = {
           type = "gpt";
           partitions = {
@@ -93,7 +96,10 @@
                   "nodiratime"
                   "user_xattr"
                 ];
-                extraArgs = [ "-L" "disk2" ];
+                extraArgs = [
+                  "-L"
+                  "disk2"
+                ];
               };
             };
           };
@@ -102,7 +108,7 @@
 
       data3 = {
         type = "disk";
-        device = "/dev/sdd";  # Third data disk
+        device = "/dev/sdd"; # Third data disk
         content = {
           type = "gpt";
           partitions = {
@@ -118,7 +124,10 @@
                   "nodiratime"
                   "user_xattr"
                 ];
-                extraArgs = [ "-L" "disk3" ];
+                extraArgs = [
+                  "-L"
+                  "disk3"
+                ];
               };
             };
           };

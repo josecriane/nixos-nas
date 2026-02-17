@@ -1,4 +1,10 @@
-{ config, lib, pkgs, modulesPath, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  modulesPath,
+  ...
+}:
 
 {
   imports = [
@@ -11,7 +17,10 @@
   boot.kernelPackages = pkgs.linuxPackages_6_6;
   boot.kernelModules = [ "kvm-intel" ];
   boot.kernelParams = [ "vm.swappiness=10" ];
-  boot.supportedFilesystems = [ "ext4" "vfat" ];
+  boot.supportedFilesystems = [
+    "ext4"
+    "vfat"
+  ];
 
   hardware.cpu.intel.updateMicrocode = true;
 }

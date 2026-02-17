@@ -1,4 +1,10 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 {
   system.stateVersion = "24.11";
@@ -33,8 +39,17 @@
 
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [ 22 139 445 2049 ];
-    allowedUDPPorts = [ 137 138 2049 ];
+    allowedTCPPorts = [
+      22
+      139
+      445
+      2049
+    ];
+    allowedUDPPorts = [
+      137
+      138
+      2049
+    ];
   };
 
   nas.webui = {
@@ -45,7 +60,7 @@
       allowUnencrypted = true;
       origins = [
         "https://nas.local"
-        "https://nas.${nasConfig.subdomain}.${nasConfig.domain}"
+        "https://${nasConfig.nasName}.${nasConfig.subdomain}.${nasConfig.domain}"
         "http://localhost:9090"
       ];
     };

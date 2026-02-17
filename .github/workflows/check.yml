@@ -23,5 +23,8 @@ jobs:
       - name: Check flake
         run: nix flake check --impure --all-systems
 
-      - name: Build NAS configuration
-        run: nix build .#nixosConfigurations.nas.config.system.build.toplevel --impure --no-link
+      - name: Build nas1 configuration
+        run: nix build .#nixosConfigurations.nas1.config.system.build.toplevel --impure --no-link
+
+      - name: Build nas2 configuration
+        run: nix build .#nixosConfigurations.nas2.config.system.build.toplevel --impure --no-link

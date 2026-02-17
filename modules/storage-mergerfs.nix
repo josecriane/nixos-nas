@@ -1,4 +1,10 @@
-{ config, lib, pkgs, nasConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nasConfig,
+  ...
+}:
 
 let
   dataDisks = nasConfig.dataDisks;
@@ -10,15 +16,13 @@ in
     mergerfs-tools
   ];
 
-  systemd.tmpfiles.rules =
-    (map (d: "d /mnt/${d} 0755 ${user} ${user} -") dataDisks)
-    ++ [
-      "d /mnt/storage 0755 ${user} ${user} -"
-      "d /mnt/storage/media 0775 ${user} ${user} -"
-      "d /mnt/storage/files 0775 ${user} ${user} -"
-      "d /mnt/storage/backups 0775 ${user} ${user} -"
-      "d /mnt/storage/downloads 0775 ${user} ${user} -"
-    ];
+  systemd.tmpfiles.rules = (map (d: "d /mnt/${d} 0755 ${user} ${user} -") dataDisks) ++ [
+    "d /mnt/storage 0755 ${user} ${user} -"
+    "d /mnt/storage/media 0775 ${user} ${user} -"
+    "d /mnt/storage/files 0775 ${user} ${user} -"
+    "d /mnt/storage/backups 0775 ${user} ${user} -"
+    "d /mnt/storage/downloads 0775 ${user} ${user} -"
+  ];
 
   fileSystems."/mnt/storage" = {
     device = "/mnt/disk*";

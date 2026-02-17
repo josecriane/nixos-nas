@@ -13,33 +13,49 @@
     };
   };
 
-  outputs = { self, nixpkgs, disko, agenix, ... }@inputs:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      disko,
+      agenix,
+      ...
+    }@inputs:
     let
       system = "x86_64-linux";
 
       # Add new machines here
-      machineNames = [ "nas2" "nas1" ];
+      machineNames = [
+        "nas2"
+        "nas1"
+      ];
 
       # secrets/ and secrets.nix are gitignored, so we read them from
       # the real filesystem using PWD (requires --impure)
       projectDir = builtins.getEnv "PWD";
       secretsPath =
-        if projectDir != "" then builtins.path {
-          path = "${projectDir}/secrets";
-          name = "nas-secrets";
-          filter = path: type:
-            type == "directory" || (type == "regular" && builtins.match ".*\\.age$" path != null);
-        }
-        else null;
+        if projectDir != "" then
+          builtins.path {
+            path = "${projectDir}/secrets";
+            name = "nas-secrets";
+            filter =
+              path: type: type == "directory" || (type == "regular" && builtins.match ".*\\.age$" path != null);
+          }
+        else
+          null;
 
-      mkMachineConfig = name:
+      mkMachineConfig =
+        name:
         let
           machineDir = ./machines/${name};
           nasConfig = import (machineDir + "/config.nix");
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit inputs nasConfig secretsPath; machineName = name; };
+          specialArgs = {
+            inherit inputs nasConfig secretsPath;
+            machineName = name;
+          };
           modules = [
             disko.nixosModules.disko
             (machineDir + "/disko.nix")
@@ -54,7 +70,6 @@
             ./modules/webui.nix
             ./modules/reverse-proxy.nix
             ./modules/samba-setup.nix
-            ./modules/samba-ldap.nix
           ];
         };
 
@@ -65,7 +80,10 @@
     in
     {
       nixosConfigurations = builtins.listToAttrs (
-        map (name: { inherit name; value = mkMachineConfig name; }) machineNames
+        map (name: {
+          inherit name;
+          value = mkMachineConfig name;
+        }) machineNames
       );
 
       devShells.${system}.default = pkgs.mkShell {
