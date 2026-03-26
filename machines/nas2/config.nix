@@ -41,8 +41,8 @@
   services = {
     samba = true;
     nfs = true;
-    cockpit = true;
-    filebrowser = true;
-    authentikIntegration = true;
+    cockpit = false;
+    filebrowser = false;
+    authentikIntegration = false;
   };
 }
