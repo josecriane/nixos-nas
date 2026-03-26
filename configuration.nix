@@ -53,9 +53,9 @@
   };
 
   nas.webui = {
-    enable = true;
+    enable = nasConfig.services.cockpit or false || nasConfig.services.filebrowser or false;
     cockpit = {
-      enable = true;
+      enable = nasConfig.services.cockpit or false;
       port = 9090;
       allowUnencrypted = true;
       origins = [
@@ -65,10 +65,10 @@
       ];
     };
     filebrowser = {
-      enable = true;
+      enable = nasConfig.services.filebrowser or false;
       port = 8080;
       rootPath = "/mnt/storage";
-      proxyAuth = true;
+      proxyAuth = nasConfig.services.authentikIntegration or false;
       proxyHeader = "X-authentik-username";
     };
   };
@@ -81,11 +81,11 @@
       useSelfSigned = true;
     };
     authentik = {
-      enable = false;
+      enable = nasConfig.services.authentikIntegration or false;
       url = "https://authentik.local";
       outpostUrl = "http://authentik-outpost:9000";
     };
-    cockpit.enable = true;
-    filebrowser.enable = true;
+    cockpit.enable = nasConfig.services.cockpit or false;
+    filebrowser.enable = nasConfig.services.filebrowser or false;
   };
 }

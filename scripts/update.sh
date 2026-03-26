@@ -2,7 +2,18 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-resolve_machine "${1:-}"
+
+# Parse flags
+INTERACTIVE=true
+MACHINE_ARG=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-interactive) INTERACTIVE=false ;;
+        *) MACHINE_ARG="$arg" ;;
+    esac
+done
+
+resolve_machine "$MACHINE_ARG"
 read_config
 
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
@@ -38,7 +49,7 @@ echo -e "  3. Authentik SSO:        ${CYAN}$SVC_AUTHENTIK${NC}"
 echo ""
 
 # Ask if they want to change anything
-if confirm "Do you want to change any configuration?"; then
+if [[ "$INTERACTIVE" == "true" ]] && confirm "Do you want to change any configuration?"; then
     echo ""
     echo -e "${YELLOW}Enter the numbers of options to change (separated by space)${NC}"
     echo -e "${YELLOW}Example: 1 3 (to change Cockpit and Authentik)${NC}"
@@ -156,21 +167,35 @@ fi
 echo -e "${GREEN}Configuration valid${NC}"
 
 # Confirm update
-echo ""
-if ! confirm "Apply changes to $MACHINE?"; then
-    echo "Update cancelled."
-    exit 0
+if [[ "$INTERACTIVE" == "true" ]]; then
+    echo ""
+    if ! confirm "Apply changes to $MACHINE?"; then
+        echo "Update cancelled."
+        exit 0
+    fi
 fi
 
 # Update
 echo -e "\n${BLUE}=== Updating $MACHINE ===${NC}\n"
 
+set +e
 NIX_SSHOPTS="-o StrictHostKeyChecking=no" nixos-rebuild switch \
     --flake ".#$MACHINE" \
     --target-host "$ADMIN_USER@$NAS_IP" \
-    --use-remote-sudo \
     --build-host "$ADMIN_USER@$NAS_IP" \
+    --sudo \
     --impure
+REBUILD_EXIT=$?
+set -e
+
+if [ $REBUILD_EXIT -ne 0 ] && [ $REBUILD_EXIT -ne 4 ]; then
+    echo -e "${RED}Rebuild error (code $REBUILD_EXIT)${NC}"
+    exit $REBUILD_EXIT
+fi
+
+if [ $REBUILD_EXIT -eq 4 ]; then
+    echo -e "${YELLOW}Rebuild completed with warnings (systemd-networkd-wait-online)${NC}"
+fi
 
 echo -e "\n${GREEN}$MACHINE updated successfully${NC}"
 echo ""

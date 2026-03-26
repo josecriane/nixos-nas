@@ -22,7 +22,6 @@ in
       owner = "root";
       group = "root";
       mode = "0400";
-      symlink = false;
     };
   };
 
