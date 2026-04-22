@@ -42,18 +42,6 @@ in
     ];
   };
 
-  services.smartd = {
-    enable = true;
-    autodetect = true;
-
-    notifications = {
-      mail.enable = false;
-      wall.enable = true;
-    };
-
-    defaults.monitored = "-a -o on -s (S/../.././02|L/../../6/03)";
-  };
-
   environment.etc."nixos-nas/disk-status.sh" = {
     text = ''
       #!/usr/bin/env bash
