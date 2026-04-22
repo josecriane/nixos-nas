@@ -9,17 +9,22 @@
 let
   dataDisks = nasConfig.dataDisks;
   diskMountList = builtins.concatStringsSep " " (map (d: "/mnt/${d}") dataDisks);
+  monEnabled = nasConfig.services.monitoring or false;
 in
 {
-  services.prometheus.exporters.node = {
-    enable = false;
+  services.prometheus.exporters.node = lib.mkIf monEnabled {
+    enable = true;
     port = 9100;
+    openFirewall = true;
     enabledCollectors = [
       "systemd"
       "filesystem"
       "diskstats"
       "netstat"
       "netdev"
+      "meminfo"
+      "cpu"
+      "loadavg"
     ];
   };
 

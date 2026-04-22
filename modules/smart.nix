@@ -10,6 +10,7 @@ let
   cfg = config.smart;
   dataDiskPaths = map (d: "/mnt/${d}") (nasConfig.dataDisks or [ ]);
   defaultMonitored = dataDiskPaths ++ [ "/mnt/storage" ];
+  monEnabled = nasConfig.services.monitoring or false;
 in
 {
   options.smart = {
@@ -40,8 +41,13 @@ in
     exporter = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = false;
-        description = "Expose SMART attributes to Prometheus via smartctl_exporter.";
+        default = monEnabled;
+        defaultText = lib.literalExpression "nasConfig.services.monitoring or false";
+        description = ''
+          Expose SMART attributes to Prometheus via smartctl_exporter.
+          Defaults to true when NAS monitoring is enabled so external scrapers
+          (e.g. a K8s cluster's ServiceMonitor) have something to hit.
+        '';
       };
       port = lib.mkOption {
         type = lib.types.port;
@@ -50,7 +56,8 @@ in
       };
       openFirewall = lib.mkOption {
         type = lib.types.bool;
-        default = false;
+        default = monEnabled;
+        defaultText = lib.literalExpression "nasConfig.services.monitoring or false";
         description = "Open the exporter port in the firewall (LAN only).";
       };
     };
@@ -77,6 +84,13 @@ in
       port = cfg.exporter.port;
       openFirewall = cfg.exporter.openFirewall;
     };
+
+    # NVMe controller char devices ship as 0600 root:root, which the
+    # smartctl-exporter user (supplementary group "disk") cannot open. Relax to
+    # disk group so the exporter can query SMART on NVMe drives.
+    services.udev.extraRules = lib.mkIf cfg.exporter.enable ''
+      KERNEL=="nvme[0-9]*", SUBSYSTEM=="nvme", MODE="0660", GROUP="disk"
+    '';
 
     systemd.services.disk-health-check = {
       description = "SMART health check across all block devices";
