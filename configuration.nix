@@ -12,6 +12,18 @@
   time.timeZone = nasConfig.timezone;
   i18n.defaultLocale = "en_US.UTF-8";
 
+  nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
+    auto-optimise-store = true;
+    trusted-users = [
+      "root"
+      "@wheel"
+    ];
+  };
+
   environment.systemPackages = with pkgs; [
     htop
     iotop
