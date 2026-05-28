@@ -145,6 +145,7 @@ in
             pkgs.coreutils
             pkgs.gnugrep
             pkgs.gawk
+            pkgs.jq
             pkgs.util-linux
           ]
         }:$PATH
@@ -153,8 +154,7 @@ in
         exit_code=0
 
         for dev in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print "/dev/"$1}'); do
-          temp=$(smartctl -A "$dev" 2>/dev/null | \
-            awk '/Temperature_Celsius|Current Drive Temperature|Temperature:/ { for (i=1;i<=NF;i++) if ($i+0>0 && $i+0<150) { print $i+0; exit } }')
+          temp=$(smartctl -A -j "$dev" 2>/dev/null | jq -r '.temperature.current // empty')
           [ -z "$temp" ] && continue
           if [ "$temp" -ge "$threshold" ]; then
             echo "WARNING: $dev temperature is $temp C (threshold: $threshold C)"
