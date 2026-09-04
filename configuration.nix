@@ -1,4 +1,5 @@
 {
+  config,
   pkgs,
   nasConfig,
   ...
@@ -63,9 +64,9 @@
   };
 
   nas.webui = {
-    enable = nasConfig.services.cockpit or false || nasConfig.services.filebrowser or false;
+    enable = config.machine.services.cockpit || config.machine.services.filebrowser;
     cockpit = {
-      enable = nasConfig.services.cockpit or false;
+      enable = config.machine.services.cockpit;
       port = 9090;
       allowUnencrypted = true;
       origins = [
@@ -75,10 +76,10 @@
       ];
     };
     filebrowser = {
-      enable = nasConfig.services.filebrowser or false;
+      enable = config.machine.services.filebrowser;
       port = 8080;
       rootPath = "/mnt/storage";
-      proxyAuth = nasConfig.services.authentikIntegration or false;
+      proxyAuth = config.machine.services.authentikIntegration;
       proxyHeader = "X-authentik-username";
     };
   };
@@ -91,11 +92,11 @@
       useSelfSigned = true;
     };
     authentik = {
-      enable = nasConfig.services.authentikIntegration or false;
+      enable = config.machine.services.authentikIntegration;
       url = "https://authentik.local";
       outpostUrl = "http://authentik-outpost:9000";
     };
-    cockpit.enable = nasConfig.services.cockpit or false;
-    filebrowser.enable = nasConfig.services.filebrowser or false;
+    cockpit.enable = config.machine.services.cockpit;
+    filebrowser.enable = config.machine.services.filebrowser;
   };
 }
