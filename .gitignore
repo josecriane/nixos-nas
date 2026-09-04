@@ -8,9 +8,6 @@ secrets/secrets.nix
 secrets/*/*.age
 *.key
 
-# Flake lock file (uncomment if you want to version it)
-# flake.lock
-
 # Editor files
 *.swp
 *.swo

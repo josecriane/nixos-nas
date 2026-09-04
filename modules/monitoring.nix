@@ -9,7 +9,7 @@
 let
   dataDisks = nasConfig.dataDisks;
   diskMountList = builtins.concatStringsSep " " (map (d: "/mnt/${d}") dataDisks);
-  monEnabled = nasConfig.services.monitoring or false;
+  monEnabled = config.machine.services.monitoring;
 in
 {
   services.prometheus.exporters.node = lib.mkIf monEnabled {

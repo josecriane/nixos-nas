@@ -8,9 +8,9 @@
 
 let
   cfg = config.smart;
-  dataDiskPaths = map (d: "/mnt/${d}") (nasConfig.dataDisks or [ ]);
+  dataDiskPaths = map (d: "/mnt/${d}") config.machine.dataDisks;
   defaultMonitored = dataDiskPaths ++ [ "/mnt/storage" ];
-  monEnabled = nasConfig.services.monitoring or false;
+  monEnabled = config.machine.services.monitoring;
 in
 {
   options.smart = {
@@ -42,7 +42,7 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = monEnabled;
-        defaultText = lib.literalExpression "nasConfig.services.monitoring or false";
+        defaultText = lib.literalExpression "config.machine.services.monitoring";
         description = ''
           Expose SMART attributes to Prometheus via smartctl_exporter.
           Defaults to true when NAS monitoring is enabled so external scrapers
@@ -57,7 +57,7 @@ in
       openFirewall = lib.mkOption {
         type = lib.types.bool;
         default = monEnabled;
-        defaultText = lib.literalExpression "nasConfig.services.monitoring or false";
+        defaultText = lib.literalExpression "config.machine.services.monitoring";
         description = "Open the exporter port in the firewall (LAN only).";
       };
     };

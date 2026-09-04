@@ -5,82 +5,80 @@
   ...
 }:
 
-with lib;
-
 let
   cfg = config.nas.reverseProxy;
 in
 {
   options.nas.reverseProxy = {
-    enable = mkEnableOption "Nginx reverse proxy for web services";
+    enable = lib.mkEnableOption "Nginx reverse proxy for web services";
 
-    domain = mkOption {
-      type = types.str;
+    domain = lib.mkOption {
+      type = lib.types.str;
       default = "nas.local";
       description = "Base domain for the NAS services";
     };
 
     ssl = {
-      enable = mkEnableOption "Enable SSL/TLS";
-      useSelfSigned = mkOption {
-        type = types.bool;
+      enable = lib.mkEnableOption "Enable SSL/TLS";
+      useSelfSigned = lib.mkOption {
+        type = lib.types.bool;
         default = true;
         description = "Use self-signed certificates (disable for Let's Encrypt)";
       };
-      certificatePath = mkOption {
-        type = types.nullOr types.str;
+      certificatePath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
         default = null;
         description = "Path to SSL certificate (if not using self-signed)";
       };
-      keyPath = mkOption {
-        type = types.nullOr types.str;
+      keyPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
         default = null;
         description = "Path to SSL private key (if not using self-signed)";
       };
     };
 
     authentik = {
-      enable = mkEnableOption "Authentik integration";
-      url = mkOption {
-        type = types.str;
+      enable = lib.mkEnableOption "Authentik integration";
+      url = lib.mkOption {
+        type = lib.types.str;
         default = "https://authentik.local";
         description = "Authentik server URL";
       };
-      outpostUrl = mkOption {
-        type = types.str;
+      outpostUrl = lib.mkOption {
+        type = lib.types.str;
         default = "http://authentik-outpost:9000";
         description = "Authentik outpost URL for forward auth";
       };
     };
 
     cockpit = {
-      enable = mkOption {
-        type = types.bool;
+      enable = lib.mkOption {
+        type = lib.types.bool;
         default = config.nas.webui.cockpit.enable or false;
         description = "Enable reverse proxy for Cockpit";
       };
-      subdomain = mkOption {
-        type = types.str;
+      subdomain = lib.mkOption {
+        type = lib.types.str;
         default = "cockpit";
         description = "Subdomain for Cockpit";
       };
     };
 
     filebrowser = {
-      enable = mkOption {
-        type = types.bool;
+      enable = lib.mkOption {
+        type = lib.types.bool;
         default = config.nas.webui.filebrowser.enable or false;
         description = "Enable reverse proxy for File Browser";
       };
-      subdomain = mkOption {
-        type = types.str;
+      subdomain = lib.mkOption {
+        type = lib.types.str;
         default = "files";
         description = "Subdomain for File Browser";
       };
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     services.nginx = {
       enable = true;
 
@@ -134,7 +132,7 @@ in
             else
               { };
 
-          authentikConfig = optionalAttrs cfg.authentik.enable {
+          authentikConfig = lib.optionalAttrs cfg.authentik.enable {
             locations."@forward-auth" = {
               extraConfig = ''
                 internal;
@@ -151,7 +149,7 @@ in
           };
         in
         {
-          "${cfg.cockpit.subdomain}.${cfg.domain}" = mkIf cfg.cockpit.enable (
+          "${cfg.cockpit.subdomain}.${cfg.domain}" = lib.mkIf cfg.cockpit.enable (
             sslConfig
             // authentikConfig
             // {
@@ -165,7 +163,7 @@ in
                   proxy_set_header X-Forwarded-Proto $scheme;
                   proxy_set_header X-Forwarded-Host $host;
 
-                  ${optionalString cfg.authentik.enable ''
+                  ${lib.optionalString cfg.authentik.enable ''
                     auth_request @forward-auth;
                     auth_request_set $auth_user $upstream_http_x_authentik_username;
                     auth_request_set $auth_email $upstream_http_x_authentik_email;
@@ -184,7 +182,7 @@ in
             }
           );
 
-          "${cfg.filebrowser.subdomain}.${cfg.domain}" = mkIf cfg.filebrowser.enable (
+          "${cfg.filebrowser.subdomain}.${cfg.domain}" = lib.mkIf cfg.filebrowser.enable (
             sslConfig
             // authentikConfig
             // {
@@ -196,7 +194,7 @@ in
                   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                   proxy_set_header X-Forwarded-Proto $scheme;
 
-                  ${optionalString cfg.authentik.enable ''
+                  ${lib.optionalString cfg.authentik.enable ''
                     auth_request @forward-auth;
                     auth_request_set $auth_user $upstream_http_x_authentik_username;
                     auth_request_set $auth_email $upstream_http_x_authentik_email;
@@ -259,13 +257,13 @@ in
                   <h1>NixOS NAS Dashboard</h1>
                   <p>Storage system with MergerFS and SnapRAID</p>
                   <div class="services">
-                    ${optionalString cfg.cockpit.enable ''
+                    ${lib.optionalString cfg.cockpit.enable ''
                       <a href="https://${cfg.cockpit.subdomain}.${cfg.domain}" class="service">
                         <h2>Cockpit</h2>
                         <p>System administration</p>
                       </a>
                     ''}
-                    ${optionalString cfg.filebrowser.enable ''
+                    ${lib.optionalString cfg.filebrowser.enable ''
                       <a href="https://${cfg.filebrowser.subdomain}.${cfg.domain}" class="service">
                         <h2>File Browser</h2>
                         <p>Web file manager</p>
@@ -282,7 +280,7 @@ in
         };
     };
 
-    security.acme = mkIf (cfg.ssl.enable && cfg.ssl.useSelfSigned) {
+    security.acme = lib.mkIf (cfg.ssl.enable && cfg.ssl.useSelfSigned) {
       acceptTerms = true;
       defaults.email = "admin@${cfg.domain}";
 
@@ -292,7 +290,7 @@ in
       };
     };
 
-    networking.firewall.allowedTCPPorts = [ 80 ] ++ optional cfg.ssl.enable 443;
+    networking.firewall.allowedTCPPorts = [ 80 ] ++ lib.optional cfg.ssl.enable 443;
 
     environment.systemPackages = [ pkgs.nginx ];
   };

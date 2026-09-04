@@ -1,5 +1,4 @@
 {
-  config,
   lib,
   pkgs,
   nasConfig,
@@ -8,15 +7,24 @@
   ...
 }:
 
-with lib;
-
 let
   sambaSecretPath =
     if secretsPath != null then secretsPath + "/${machineName}/samba-password.age" else null;
   sambaSecretExists = sambaSecretPath != null && builtins.pathExists sambaSecretPath;
 in
 {
-  age.secrets = mkIf sambaSecretExists {
+  warnings = lib.optional (!sambaSecretExists) (
+    "nixos-nas: no Samba password secret for '${machineName}'"
+    + (
+      if secretsPath == null then ", because secretsPath is null." else " at ${toString sambaSecretPath}."
+    )
+    + " Samba will start without a password for '${nasConfig.adminUser}';"
+    + " set it manually with `smbpasswd -a ${nasConfig.adminUser}`, or place"
+    + " the age file there. If the file does exist in your repo, check that"
+    + " whatever builds secretsPath is not filtering out directories."
+  );
+
+  age.secrets = lib.mkIf sambaSecretExists {
     samba-password = {
       file = sambaSecretPath;
       owner = "root";
@@ -25,7 +33,7 @@ in
     };
   };
 
-  systemd.services.samba-setup-password = mkIf sambaSecretExists {
+  systemd.services.samba-setup-password = lib.mkIf sambaSecretExists {
     description = "Setup Samba password for ${nasConfig.adminUser}";
     after = [ "samba-smbd.service" ];
     wantedBy = [ "multi-user.target" ];
