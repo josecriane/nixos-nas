@@ -6,32 +6,30 @@
   ...
 }:
 
-with lib;
-
 let
   cfg = config.nas.webui;
   adminUser = nasConfig.adminUser;
 in
 {
   options.nas.webui = {
-    enable = mkEnableOption "Web UI services (Cockpit and File Browser)";
+    enable = lib.mkEnableOption "Web UI services (Cockpit and File Browser)";
 
     cockpit = {
-      enable = mkEnableOption "Cockpit web interface" // {
+      enable = lib.mkEnableOption "Cockpit web interface" // {
         default = true;
       };
-      port = mkOption {
-        type = types.port;
+      port = lib.mkOption {
+        type = lib.types.port;
         default = 9090;
         description = "Port for Cockpit web interface";
       };
-      allowUnencrypted = mkOption {
-        type = types.bool;
+      allowUnencrypted = lib.mkOption {
+        type = lib.types.bool;
         default = false;
         description = "Allow unencrypted connections (useful when behind reverse proxy)";
       };
-      origins = mkOption {
-        type = types.listOf types.str;
+      origins = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
         default = [
           "https://nas.local"
           "http://localhost:9090"
@@ -41,52 +39,52 @@ in
     };
 
     filebrowser = {
-      enable = mkEnableOption "File Browser web interface" // {
+      enable = lib.mkEnableOption "File Browser web interface" // {
         default = true;
       };
-      port = mkOption {
-        type = types.port;
+      port = lib.mkOption {
+        type = lib.types.port;
         default = 8080;
         description = "Port for File Browser";
       };
-      rootPath = mkOption {
-        type = types.str;
+      rootPath = lib.mkOption {
+        type = lib.types.str;
         default = "/mnt/storage";
         description = "Root path for File Browser";
       };
-      databasePath = mkOption {
-        type = types.str;
+      databasePath = lib.mkOption {
+        type = lib.types.str;
         default = "/var/lib/filebrowser/filebrowser.db";
         description = "Path to File Browser database";
       };
-      proxyAuth = mkOption {
-        type = types.bool;
+      proxyAuth = lib.mkOption {
+        type = lib.types.bool;
         default = false;
         description = "Enable proxy authentication (for Authentik)";
       };
-      proxyHeader = mkOption {
-        type = types.str;
+      proxyHeader = lib.mkOption {
+        type = lib.types.str;
         default = "X-authentik-username";
         description = "Header name for proxy authentication";
       };
     };
   };
 
-  config = mkIf cfg.enable {
-    services.cockpit = mkIf cfg.cockpit.enable {
+  config = lib.mkIf cfg.enable {
+    services.cockpit = lib.mkIf cfg.cockpit.enable {
       enable = true;
       port = cfg.cockpit.port;
 
       settings = {
         WebService = {
           AllowUnencrypted = cfg.cockpit.allowUnencrypted;
-          Origins = mkForce (concatStringsSep " " cfg.cockpit.origins);
+          Origins = lib.mkForce (lib.concatStringsSep " " cfg.cockpit.origins);
           ListenAddress = "0.0.0.0";
         };
       };
     };
 
-    systemd.services.filebrowser = mkIf cfg.filebrowser.enable {
+    systemd.services.filebrowser = lib.mkIf cfg.filebrowser.enable {
       description = "File Browser - Web File Manager";
       after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
@@ -103,7 +101,7 @@ in
           "root": "${cfg.filebrowser.rootPath}",
           "log": "stdout",
           "baseURL": "",
-          ${optionalString cfg.filebrowser.proxyAuth ''
+          ${lib.optionalString cfg.filebrowser.proxyAuth ''
             "auth": {
               "method": "proxy",
               "header": "${cfg.filebrowser.proxyHeader}"
@@ -140,21 +138,21 @@ in
       };
     };
 
-    systemd.tmpfiles.rules = mkIf cfg.filebrowser.enable [
+    systemd.tmpfiles.rules = lib.mkIf cfg.filebrowser.enable [
       "d /var/lib/filebrowser 0755 ${adminUser} ${adminUser} -"
     ];
 
     environment.systemPackages =
       with pkgs;
-      (optionals cfg.cockpit.enable [
+      (lib.optionals cfg.cockpit.enable [
         cockpit
         cockpit-machines
         cockpit-podman
       ])
-      ++ (optional cfg.filebrowser.enable filebrowser);
+      ++ (lib.optional cfg.filebrowser.enable filebrowser);
 
     networking.firewall.allowedTCPPorts =
-      (optional cfg.cockpit.enable cfg.cockpit.port)
-      ++ (optional cfg.filebrowser.enable cfg.filebrowser.port);
+      (lib.optional cfg.cockpit.enable cfg.cockpit.port)
+      ++ (lib.optional cfg.filebrowser.enable cfg.filebrowser.port);
   };
 }

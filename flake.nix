@@ -37,13 +37,16 @@
           extraModules ? [ ],
           extraSpecialArgs ? { },
         }:
+        let
+          cfg = nixpkgs.lib.recursiveUpdate (import ./modules/nas-defaults.nix) (
+            nasConfig // { inherit name; }
+          );
+        in
         nixpkgs.lib.nixosSystem {
           inherit system;
           specialArgs = {
             inherit inputs secretsPath;
-            nasConfig = nasConfig // {
-              inherit name;
-            };
+            nasConfig = cfg;
             machineName = name;
           }
           // extraSpecialArgs;
@@ -51,6 +54,7 @@
             disko.nixosModules.disko
             agenix.nixosModules.default
             "${hostsPath}/${name}"
+            "${self}/modules/options.nix"
             "${self}/configuration.nix"
             "${self}/modules/users.nix"
             "${self}/modules/storage-mergerfs.nix"
@@ -88,7 +92,7 @@
         ) nasConfigs;
 
       # Standalone mode: enumerate machines/<name>/ dirs and build each using
-      # its own config.nix. Requires --impure if secrets/ is gitignored.
+      # its own config.nix.
       machinesDir = "${self}/machines";
       hasMachinesDir = builtins.pathExists machinesDir;
       standaloneNames =
@@ -97,17 +101,6 @@
         else
           [ ];
 
-      projectDir = builtins.getEnv "PWD";
-      impureSecrets =
-        if projectDir != "" && builtins.pathExists "${projectDir}/secrets" then
-          builtins.path {
-            path = "${projectDir}/secrets";
-            name = "nas-secrets";
-            filter = p: t: t == "directory" || (t == "regular" && builtins.match ".*\\.age$" p != null);
-          }
-        else
-          null;
-
       standaloneConfigs = builtins.listToAttrs (
         map (name: {
           inherit name;
@@ -115,7 +108,7 @@
             inherit name;
             nasConfig = import "${machinesDir}/${name}/config.nix";
             hostsPath = machinesDir;
-            secretsPath = impureSecrets;
+            secretsPath = "${self}/secrets";
           };
         }) standaloneNames
       );
@@ -146,6 +139,20 @@
           echo "  ./scripts/update.sh <machine>    - Update configuration"
           echo ""
         '';
+      };
+
+      checks.${system} = {
+        example = self.nixosConfigurations.example.config.system.build.toplevel;
+
+        example-full =
+          (mkNasMachine {
+            name = "example";
+            nasConfig = import ./examples/config-full.nix // {
+              inherit (import ./machines/example/config.nix) dataDisks;
+            };
+            hostsPath = ./machines;
+            secretsPath = "${self}/secrets";
+          }).config.system.build.toplevel;
       };
 
       formatter.${system} = pkgs.nixfmt-tree;
